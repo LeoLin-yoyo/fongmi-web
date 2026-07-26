@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import Integer, String, Text, DateTime, UniqueConstraint, ForeignKey, func
+from sqlalchemy import Integer, String, Text, DateTime, UniqueConstraint, ForeignKey, func, select, update
 from datetime import datetime
 import os
 
@@ -26,8 +26,9 @@ class Config(Base):
     type: Mapped[str] = mapped_column(String(16), default="vod")
     content: Mapped[str] = mapped_column(Text, default="")
     hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    enabled: Mapped[int] = mapped_column(Integer, default=1)
+    priority: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
-    is_active: Mapped[int] = mapped_column(Integer, default=0)
 
     __table_args__ = (UniqueConstraint("hash", name="uq_config_hash"),)
 
@@ -91,6 +92,16 @@ class Keep(Base):
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(Config).where(Config.enabled == 1).limit(1)
+        )
+        if result.scalar_one_or_none() is None:
+            await session.execute(
+                update(Config).where(Config.id > 0).values(enabled=1, priority=Config.id)
+            )
+            await session.commit()
 
 
 async def get_db():

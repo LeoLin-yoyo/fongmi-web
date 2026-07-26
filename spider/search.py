@@ -14,16 +14,27 @@ _SSL_CTX.verify_mode = ssl.CERT_NONE
 
 async def search_all(keyword: str) -> list:
     """Search all VOD sites in parallel, return merged items with pictures"""
-    from model.database import async_session, Site as SiteModel
+    from model.database import async_session, Site as SiteModel, Config as ConfigModel
 
     async with async_session() as session:
+        enabled_configs = await session.execute(
+            select(ConfigModel).where(ConfigModel.enabled == 1)
+        )
+        enabled_ids = [c.id for c in enabled_configs.scalars().all()]
+        if not enabled_ids:
+            return []
+
         result = await session.execute(
-            select(SiteModel).where(SiteModel.searchable == 1)
+            select(SiteModel).where(SiteModel.searchable == 1, SiteModel.config_id.in_(enabled_ids))
         )
         site_rows = result.scalars().all()
 
-    tasks = [_search_one_row(s.key, s.name, s.api, s.type, s.ext, keyword) for s in site_rows]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    coros = [_search_one_row(s.key, s.name, s.api, s.type, s.ext, keyword) for s in site_rows]
+    try:
+        results = await asyncio.wait_for(asyncio.gather(*coros, return_exceptions=True), timeout=20)
+    except asyncio.TimeoutError:
+        logger.warning("Search timed out")
+        results = []
 
     merged = []
     for r in results:
@@ -50,40 +61,28 @@ async def _search_one_row(site_key, site_name, api_url, site_type, site_ext, key
     if not api_url:
         return []
 
+    if api_url.startswith("assets://"):
+        return []
+
+    if api_url.endswith(".py"):
+        return []
+
     if site_type == 1:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, _sync_search, site_key, site_name, api_url, keyword)
     elif site_type == 3:
-        from spider.engine import search_content
-        from model.bean import Site
-        site = Site(
-            key=site_key, name=site_name, type=site_type,
-            api=api_url, ext=site_ext or "", jar="",
-        )
-        try:
-            result = await search_content(site, keyword)
-            items = result.get("list", [])
-            for item in items:
-                item["_site_key"] = site_key
-                item["_site_name"] = site_name
-            return items
-        except Exception as e:
-            logger.debug(f"Search {site_key} error: {e}")
-            return []
+        return []
     else:
         return []
 
 
 def _sync_search(site_key, site_name, api_url, keyword):
     """Synchronous search using urllib"""
-    base = api_url.split("?")[0].rstrip("/") if "?" in api_url else api_url.rstrip("/")
-    vod_path = "api.php/provide/vod/"
-    if vod_path not in base:
-        base = base + "/" + vod_path
-
+    base = api_url.rstrip("/")
     import urllib.parse
     params = urllib.parse.urlencode({"wd": keyword, "pg": "1"})
-    url = f"{base}?{params}"
+    sep = "&" if "?" in base else "?"
+    url = f"{base}{sep}{params}"
 
     req = urllib.request.Request(url, headers={"User-Agent": "okhttp/3.10.0"})
     try:

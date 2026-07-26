@@ -25,9 +25,9 @@ class HttpSpider:
 
     def _build_url(self, params: dict = None) -> str:
         base = self.api_url.split("?")[0].rstrip("/") if "?" in self.api_url else self.api_url.rstrip("/")
-        vod_path = "api.php/provide/vod/"
+        vod_path = "api.php/provide/vod"
         if vod_path not in base:
-            base = base + "/" + vod_path
+            base = base + "/" + vod_path + "/"
         import urllib.parse
         query = ""
         if params:

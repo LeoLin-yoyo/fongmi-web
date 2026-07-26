@@ -310,7 +310,7 @@ class SpiderJSRuntime:
         return arg
 
     def call(self, method: str, *args):
-        timeout = 30
+        timeout = 10
 
         result = [None]
         error = [None]
@@ -324,15 +324,27 @@ class SpiderJSRuntime:
                     return
                 js_args = [self._to_js_arg(a) for a in args]
                 raw = fn(*js_args)
-                if isinstance(raw, (dict, list, str, int, float, bool)):
-                    result[0] = raw
-                elif raw is None:
+                if raw is None:
                     result[0] = {}
+                elif isinstance(raw, (int, float, bool)):
+                    result[0] = raw
+                elif isinstance(raw, str):
+                    if raw.strip().startswith(("{", "[")):
+                        try:
+                            result[0] = json.loads(raw)
+                        except json.JSONDecodeError:
+                            result[0] = raw
+                    else:
+                        result[0] = raw
                 else:
-                    try:
-                        result[0] = json.loads(str(raw))
-                    except (json.JSONDecodeError, ValueError):
-                        result[0] = str(raw)
+                    s = str(raw)
+                    if s.startswith(("{", "[")):
+                        try:
+                            result[0] = json.loads(s)
+                        except json.JSONDecodeError:
+                            result[0] = s
+                    else:
+                        result[0] = s
             except quickjs.JSException as e:
                 error[0] = e
             except Exception as e:

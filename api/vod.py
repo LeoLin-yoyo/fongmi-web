@@ -12,35 +12,43 @@ router = APIRouter(prefix="/vod", tags=["vod"])
 
 
 async def _get_site(site_key: str):
+    """跨所有 enabled 配置查找站点，按 priority 降序取第一个匹配的"""
     async with async_session() as session:
-        result = await session.execute(select(SiteModel).where(SiteModel.key == site_key))
-        db = result.scalar_one_or_none()
-    if not db:
-        raise HTTPException(404, "站点不存在")
-    ext = db.ext or ""
-    if isinstance(ext, dict):
-        ext = json.dumps(ext, ensure_ascii=False)
-    site = Site(
-        key=db.key, name=db.name, type=db.type,
-        api=db.api, ext=ext, jar="",
-        searchable=1, quickSearch=1, filterable=1,
-    )
-    parses = []
-    async with async_session() as session:
-        config_result = await session.execute(
-            select(ConfigModel).where(ConfigModel.is_active == 1).limit(1)
+        configs = await session.execute(
+            select(ConfigModel).where(ConfigModel.enabled == 1).order_by(ConfigModel.priority.desc())
         )
-        active_config = config_result.scalar_one_or_none()
-        if active_config:
-            parse_result = await session.execute(
-                select(ParseModel).where(ParseModel.config_id == active_config.id)
+        enabled_configs = configs.scalars().all()
+
+        for cfg in enabled_configs:
+            result = await session.execute(
+                select(SiteModel).where(SiteModel.config_id == cfg.id, SiteModel.key == site_key)
             )
-            db_parses = parse_result.scalars().all()
-            parses = [
-                {"name": p.name, "url": p.url, "type": p.type, "ext": p.ext}
-                for p in db_parses
-            ]
-    return site, parses
+            db = result.scalar_one_or_none()
+            if db:
+                ext = db.ext or ""
+                if isinstance(ext, dict):
+                    ext = json.dumps(ext, ensure_ascii=False)
+                site = Site(
+                    key=db.key, name=db.name, type=db.type,
+                    api=db.api, ext=ext, jar="",
+                    searchable=1, quickSearch=1, filterable=1,
+                )
+                # 收集所有 enabled config 的解析器
+                parses = []
+                for p_cfg in enabled_configs:
+                    parse_result = await session.execute(
+                        select(ParseModel).where(ParseModel.config_id == p_cfg.id)
+                    )
+                    db_parses = parse_result.scalars().all()
+                    seen = set()
+                    for p in db_parses:
+                        key = (p.url, p.type)
+                        if key not in seen:
+                            seen.add(key)
+                            parses.append({"name": p.name, "url": p.url, "type": p.type, "ext": p.ext})
+                return site, parses
+
+    raise HTTPException(404, "站点不存在")
 
 
 @router.get("/home")

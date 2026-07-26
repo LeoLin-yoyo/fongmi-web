@@ -14,7 +14,7 @@
         <n-tabs type="line" animated>
           <n-tab-pane name="url" tab="URL导入">
             <n-space vertical :size="12">
-              <n-input v-model:value="url" type="textarea" placeholder="请输入订阅URL" :autosize="{ minRows: 2, maxRows: 5 }" />
+              <n-input v-model:value="url" type="textarea" placeholder="请输入订阅URL（每行一个，支持批量导入）" :autosize="{ minRows: 3, maxRows: 8 }" />
               <n-button type="primary" :loading="importing" @click="importUrl">导入</n-button>
             </n-space>
           </n-tab-pane>
@@ -34,17 +34,24 @@
 
     <div class="section">
       <n-card title="配置列表">
-        <div v-for="cfg in configs" :key="cfg.id" class="config-item">
+        <div v-if="!configs.length" class="no-config">暂无配置</div>
+        <div v-for="(cfg, idx) in configs" :key="cfg.id" class="config-item">
+          <div class="config-drag-handle" title="拖拽排序">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="18" x2="16" y2="18"/>
+            </svg>
+          </div>
           <div class="config-info">
-            <span class="config-name">{{ cfg.name }}</span>
-            <n-tag v-if="cfg.is_active" size="small" type="success">已激活</n-tag>
+            <span class="config-name">{{ cfg.name || '未命名配置' }}</span>
+            <n-tag v-if="cfg.enabled" size="small" type="success">已启用</n-tag>
+            <n-tag v-else size="small">已禁用</n-tag>
+            <span class="config-meta">{{ cfg.type === 'live' ? '直播' : '点播' }}</span>
           </div>
           <div class="config-actions">
-            <n-button v-if="!cfg.is_active" size="small" @click="activate(cfg.id)">激活</n-button>
+            <n-switch :value="!!cfg.enabled" @update:value="() => toggle(cfg.id)" />
             <n-button size="small" type="error" ghost @click="remove(cfg.id)">删除</n-button>
           </div>
         </div>
-        <div v-if="!configs.length" class="no-config">暂无配置</div>
       </n-card>
     </div>
 
@@ -62,8 +69,8 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useMessage, NCard, NTabs, NTabPane, NInput, NButton, NUpload, NUploadDragger, NText, NTag, NSpace } from 'naive-ui'
-import { importConfig, getConfigs, deleteConfig, activateConfig } from '@/api/config'
+import { useMessage, NCard, NTabs, NTabPane, NInput, NButton, NUpload, NUploadDragger, NText, NTag, NSpace, NSwitch } from 'naive-ui'
+import { importConfig, importBatch, getConfigs, deleteConfig, toggleConfig } from '@/api/config'
 
 const message = useMessage()
 const url = ref('')
@@ -72,7 +79,6 @@ const configs = ref<any[]>([])
 const proxy = ref('')
 
 onMounted(async () => {
-  // Load current proxy
   try {
     const res = await fetch('/api/system/config')
     const data = await res.json()
@@ -103,8 +109,17 @@ async function importUrl() {
   if (!url.value.trim()) return message.warning('请输入URL')
   importing.value = true
   try {
-    await importConfig({ url: url.value.trim(), type: 'url' })
-    message.success('导入成功')
+    const urls = url.value.split('\n').map(u => u.trim()).filter(Boolean)
+    if (urls.length === 1) {
+      await importConfig({ url: urls[0], type: 'url' })
+      message.success('导入成功')
+    } else {
+      const res: any = await importBatch(urls)
+      const success = res.results?.filter((r: any) => r.status === 'success').length || 0
+      const errors = res.results?.filter((r: any) => r.status === 'error').length || 0
+      const skipped = res.results?.filter((r: any) => r.status === 'skipped').length || 0
+      message.success(`导入完成: ${success} 成功, ${skipped} 跳过, ${errors} 失败`)
+    }
     url.value = ''
     await loadConfigs()
   } catch (e: any) {
@@ -132,9 +147,8 @@ async function onUpload(options: any) {
   reader.readAsText(file)
 }
 
-async function activate(id: number) {
-  await activateConfig(id)
-  message.success('已激活')
+async function toggle(id: number) {
+  await toggleConfig(id)
   await loadConfigs()
 }
 
@@ -148,10 +162,13 @@ async function remove(id: number) {
 .settings-page { padding: 20px; max-width: 800px; margin: 0 auto; }
 .page-header h2 { margin: 0 0 20px; }
 .section { margin-bottom: 20px; }
-.config-item { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--n-divider-color); }
+.config-item { display: flex; align-items: center; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--n-divider-color); }
 .config-item:last-child { border-bottom: none; }
-.config-info { display: flex; align-items: center; gap: 8px; }
-.config-name { font-size: 14px; }
-.config-actions { display: flex; gap: 8px; }
+.config-drag-handle { cursor: grab; opacity: 0.4; display: flex; align-items: center; }
+.config-drag-handle:hover { opacity: 0.8; }
+.config-info { flex: 1; display: flex; align-items: center; gap: 8px; }
+.config-name { font-size: 14px; font-weight: 500; }
+.config-meta { font-size: 11px; color: #888; background: var(--n-divider-color); padding: 1px 6px; border-radius: 3px; }
+.config-actions { display: flex; align-items: center; gap: 8px; }
 .hint { font-size: 12px; color: #888; margin: 0; }
 </style>

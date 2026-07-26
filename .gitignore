@@ -23,6 +23,11 @@ test_sub.json
 setup_db.py
 final_check.py
 _run_server.py
+test_*.py
+e2e_test.py
+test_screenshots/
+server*.log
+op-tg-start.bat
 
 # Node
 node_modules/

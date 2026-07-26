@@ -16,12 +16,12 @@ from spider.proxy_config import get_proxy_url
 _PROXY_URL = get_proxy_url()
 
 
-async def _get_config():
+async def _get_enabled_configs():
     async with async_session() as session:
         result = await session.execute(
-            select(ConfigModel).where(ConfigModel.is_active == 1).limit(1)
+            select(ConfigModel).where(ConfigModel.enabled == 1).order_by(ConfigModel.priority.desc())
         )
-        return result.scalar_one_or_none()
+        return result.scalars().all()
 
 
 async def _fetch_url(url: str) -> str:
@@ -35,35 +35,55 @@ async def _fetch_url(url: str) -> str:
 
 @router.get("/groups")
 async def live_groups():
-    cfg = await _get_config()
-    if not cfg:
+    configs = await _get_enabled_configs()
+    if not configs:
         return []
-    try:
-        data = json.loads(decrypt_config(cfg.content))
-        lives = data.get("lives", [])
-        return [{"name": lv.get("name", f"Source {idx}"), "type": lv.get("type", 0),
-                 "url": lv.get("url", ""), "epg": lv.get("epg", "")}
-                for idx, lv in enumerate(lives)]
-    except Exception as e:
-        logger.error(f"live_groups error: {e}")
-        return []
+
+    all_lives = []
+    for cfg in configs:
+        try:
+            data = json.loads(decrypt_config(cfg.content))
+            lives = data.get("lives", [])
+            for lv in lives:
+                all_lives.append({
+                    "name": lv.get("name", f"Source"),
+                    "type": lv.get("type", 0),
+                    "url": lv.get("url", ""),
+                    "epg": lv.get("epg", ""),
+                    "_config_id": cfg.id,
+                    "_config_name": cfg.name,
+                })
+        except Exception as e:
+            logger.error(f"live_groups config {cfg.id} error: {e}")
+
+    return all_lives
 
 
 @router.get("/channels")
 async def live_channels(source_idx: int = Query(default=0)):
-    cfg = await _get_config()
-    if not cfg:
+    configs = await _get_enabled_configs()
+    if not configs:
         return []
-    try:
-        data = json.loads(decrypt_config(cfg.content))
-        lives = data.get("lives", [])
-        if source_idx >= len(lives):
-            return []
-        lv = lives[source_idx]
-        url = lv.get("url", "")
-        if not url:
-            return []
 
+    all_lives = []
+    for cfg in configs:
+        try:
+            data = json.loads(decrypt_config(cfg.content))
+            lives = data.get("lives", [])
+            for lv in lives:
+                all_lives.append({"name": lv.get("name", ""), "url": lv.get("url", ""), "type": lv.get("type", 0), "_config_id": cfg.id})
+        except Exception as e:
+            logger.error(f"live_channels config {cfg.id} error: {e}")
+
+    if source_idx >= len(all_lives):
+        return []
+
+    lv = all_lives[source_idx]
+    url = lv.get("url", "")
+    if not url:
+        return []
+
+    try:
         text = await _fetch_url(url)
         if text.strip().startswith("["):
             return _parse_json(text)
@@ -72,7 +92,7 @@ async def live_channels(source_idx: int = Query(default=0)):
         else:
             return _parse_txt(text)
     except Exception as e:
-        logger.error(f"live_channels error: {e}")
+        logger.error(f"live_channels fetch error: {e}")
         return []
 
 
