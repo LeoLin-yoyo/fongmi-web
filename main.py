@@ -1,12 +1,16 @@
 import os
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
+import json as json_mod
 
 from model.database import init_db
 from api import api_router
+from local_video import api as local_api
+from local_video.state import init_local_video
 
 FRONTEND_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "dist")
 
@@ -14,14 +18,42 @@ FRONTEND_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fronte
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    init_local_video()
     yield
 
 
 app = FastAPI(title="FongMi TV Web", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=400,
+        content={"code": 1, "detail": "请求参数错误: " + str(exc.errors())},
+    )
+
+
+@app.exception_handler(json_mod.JSONDecodeError)
+async def json_decode_handler(request: Request, exc: json_mod.JSONDecodeError):
+    return JSONResponse(
+        status_code=400,
+        content={"code": 1, "detail": "JSON 格式错误"},
+    )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    if isinstance(exc, (SystemExit, KeyboardInterrupt, GeneratorExit)):
+        raise exc
+    return JSONResponse(
+        status_code=500,
+        content={"code": 1, "detail": "服务器内部错误"},
+    )
+
 # API routes first
 app.include_router(api_router, prefix="/api")
+app.include_router(local_api.router, prefix="/api")
 
 
 @app.get("/api/health")

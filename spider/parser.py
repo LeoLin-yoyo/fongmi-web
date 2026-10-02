@@ -5,6 +5,8 @@ import urllib.parse
 import urllib.request
 from loguru import logger
 
+from spider.net import ensure_http_url
+
 
 class ParserEngine:
     def __init__(self, parses: list[dict]):
@@ -45,6 +47,7 @@ class ParserEngine:
         filled = parse_url.replace("{url}", urllib.parse.quote(url, safe=""))
         filled = filled.replace("{flag}", flag)
 
+        ensure_http_url(filled)
         req = urllib.request.Request(filled, headers={"User-Agent": "okhttp/3.10.0"})
         try:
             with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:

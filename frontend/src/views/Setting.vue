@@ -12,10 +12,37 @@
     <div class="section">
       <n-card title="订阅管理">
         <n-tabs type="line" animated>
-          <n-tab-pane name="url" tab="URL导入">
+          <n-tab-pane name="url" tab="点播源导入">
             <n-space vertical :size="12">
               <n-input v-model:value="url" type="textarea" placeholder="请输入订阅URL（每行一个，支持批量导入）" :autosize="{ minRows: 3, maxRows: 8 }" />
-              <n-button type="primary" :loading="importing" @click="importUrl">导入</n-button>
+              <div class="btn-row">
+                <n-button :loading="checking" @click="checkUrls">检测可用性</n-button>
+                <n-button type="primary" :loading="importing" @click="importUrl">导入</n-button>
+              </div>
+              <div v-if="checkResults.length" class="check-results">
+                <div v-for="r in checkResults" :key="r.url" class="check-item" :class="{ ok: r.available, fail: !r.available }">
+                  <span class="check-icon">{{ r.available ? '✓' : '✗' }}</span>
+                  <span class="check-url" :title="r.url">{{ shortUrl(r.url) }}</span>
+                  <span class="check-detail">{{ r.detail }}</span>
+                  <span v-if="r.site_count" class="check-count">{{ r.site_count }}站点</span>
+                </div>
+              </div>
+            </n-space>
+          </n-tab-pane>
+          <n-tab-pane name="live" tab="直播源导入">
+            <n-space vertical :size="12">
+              <n-input v-model:value="liveUrl" type="textarea" placeholder="请输入直播源URL（m3u/txt，每行一个）" :autosize="{ minRows: 3, maxRows: 8 }" />
+              <div class="btn-row">
+                <n-button :loading="liveChecking" @click="checkLiveUrls">检测</n-button>
+                <n-button type="primary" :loading="liveImporting" @click="importLiveUrls">导入直播源</n-button>
+              </div>
+              <div v-if="liveCheckResults.length" class="check-results">
+                <div v-for="r in liveCheckResults" :key="r.url" class="check-item" :class="{ ok: r.available, fail: !r.available }">
+                  <span class="check-icon">{{ r.available ? '✓' : '✗' }}</span>
+                  <span class="check-url" :title="r.url">{{ shortUrl(r.url) }}</span>
+                  <span class="check-detail">{{ r.detail }}</span>
+                </div>
+              </div>
             </n-space>
           </n-tab-pane>
           <n-tab-pane name="file" tab="文件上传">
@@ -33,14 +60,9 @@
     </div>
 
     <div class="section">
-      <n-card title="配置列表">
+      <n-card title="点播配置列表">
         <div v-if="!configs.length" class="no-config">暂无配置</div>
-        <div v-for="(cfg, idx) in configs" :key="cfg.id" class="config-item">
-          <div class="config-drag-handle" title="拖拽排序">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="18" x2="16" y2="18"/>
-            </svg>
-          </div>
+        <div v-for="cfg in configs" :key="cfg.id" class="config-item">
           <div class="config-info">
             <span class="config-name">{{ cfg.name || '未命名配置' }}</span>
             <n-tag v-if="cfg.enabled" size="small" type="success">已启用</n-tag>
@@ -56,11 +78,68 @@
     </div>
 
     <div class="section">
+      <n-card title="直接导入的直播源">
+        <div v-if="!liveSources.length" class="no-config">暂无直接导入的直播源</div>
+        <div v-for="src in liveSources" :key="src.id" class="config-item">
+          <div class="config-info">
+            <span class="config-name">{{ src.name }}</span>
+            <n-tag size="small" type="info">{{ src.type }}</n-tag>
+            <span class="config-meta">{{ src.group_count }}组 {{ src.channel_count }}频道</span>
+          </div>
+          <div class="config-actions">
+            <n-switch :value="!!src.enabled" @update:value="() => toggleLive(src.id)" />
+            <n-button size="small" type="error" ghost @click="removeLive(src.id)">删除</n-button>
+          </div>
+        </div>
+      </n-card>
+    </div>
+
+    <div class="section">
       <n-card title="代理设置">
         <n-space vertical :size="12">
-          <n-input v-model:value="proxy" placeholder="http://127.0.0.1:7890 （留空则不使用代理）" />
+          <n-input v-model:value="proxy" placeholder="http://127.0.0.1:7890 （留空则自动尝试系统代理）" />
           <n-button type="primary" @click="saveProxy">保存</n-button>
-          <p class="hint">设置后刷新页面生效。用于直播源下载和远程站点访问。</p>
+          <p class="hint">优先级：此处配置 → 环境变量 → Windows 系统代理 → 直连。用于直播源下载、远程站点访问和封面图片代理。</p>
+        </n-space>
+      </n-card>
+    </div>
+
+    <div class="section">
+      <n-card title="本地视频">
+        <div class="stats-row">
+          <div class="stat-card">
+            <div class="num">{{ stats.video_count ?? '–' }}</div>
+            <div class="label">视频总数</div>
+          </div>
+          <div class="stat-card">
+            <div class="num">{{ stats.dir_count ?? '–' }}</div>
+            <div class="label">媒体目录</div>
+          </div>
+          <div class="stat-card">
+            <div class="num">{{ formatSize(stats.total_size) }}</div>
+            <div class="label">总容量</div>
+          </div>
+        </div>
+        <n-space vertical :size="12">
+          <div class="dir-form">
+            <n-input v-model:value="newDir" placeholder="例如：F:\telegram" @keyup.enter="addDir" />
+            <n-button type="primary" :loading="adding" :disabled="!newDir.trim()" @click="addDir">添加目录</n-button>
+          </div>
+          <div v-if="!dirs.length" class="no-config">尚未添加任何目录</div>
+          <div v-for="d in dirs" :key="d.id" class="dir-item">
+            <div class="dir-info">
+              <div class="dir-path" :title="d.path">{{ d.path }}</div>
+              <div class="dir-meta">
+                <span>{{ d.video_count }} 个视频</span>
+                <span v-if="d.last_scan">上次扫描：{{ d.last_scan }}</span>
+                <span v-else>尚未扫描</span>
+              </div>
+            </div>
+            <div class="dir-actions">
+              <n-button size="small" :loading="scanning" @click="scanDir(d)">扫描</n-button>
+              <n-button size="small" type="error" ghost @click="removeDir(d)">删除</n-button>
+            </div>
+          </div>
         </n-space>
       </n-card>
     </div>
@@ -68,15 +147,91 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useMessage, NCard, NTabs, NTabPane, NInput, NButton, NUpload, NUploadDragger, NText, NTag, NSpace, NSwitch } from 'naive-ui'
-import { importConfig, importBatch, getConfigs, deleteConfig, toggleConfig } from '@/api/config'
+import { importConfig, importBatch, getConfigs, deleteConfig, toggleConfig, checkBatch, importLiveBatch, getLiveSources, deleteLiveSource, toggleLiveSource } from '@/api/config'
+import { localAPI } from '@/api/local'
 
 const message = useMessage()
 const url = ref('')
 const importing = ref(false)
+const checking = ref(false)
+const checkResults = ref<any[]>([])
 const configs = ref<any[]>([])
+const liveUrl = ref('')
+const liveImporting = ref(false)
+const liveChecking = ref(false)
+const liveCheckResults = ref<any[]>([])
+const liveSources = ref<any[]>([])
 const proxy = ref('')
+const dirs = ref<any[]>([])
+const stats = ref<any>({})
+const newDir = ref('')
+const adding = ref(false)
+const scanning = ref(false)
+let pollTimer: number | undefined
+
+function formatSize(bytes: number) {
+  if (bytes === null || bytes === undefined) return '–'
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let v = bytes / 1024
+  let i = 0
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++ }
+  return `${v >= 100 ? v.toFixed(0) : v.toFixed(1)} ${units[i]}`
+}
+
+function shortUrl(u: string) {
+  if (u.length <= 50) return u
+  return u.substring(0, 47) + '...'
+}
+
+async function refreshLocal() {
+  dirs.value = await localAPI.dirs().catch(() => [])
+  stats.value = await localAPI.stats().catch(() => ({}))
+}
+
+async function addDir() {
+  const path = newDir.value.trim()
+  if (!path) return
+  adding.value = true
+  try {
+    await localAPI.addDir(path)
+    message.success('添加成功')
+    newDir.value = ''
+    await refreshLocal()
+    localAPI.scanAll().catch(() => {})
+  } catch (e: any) {
+    message.error(`添加失败：${e.message}`)
+  } finally {
+    adding.value = false
+  }
+}
+
+async function removeDir(d: any) {
+  if (!confirm(`确定移除目录「${d.path}」？`)) return
+  try {
+    await localAPI.deleteDir(d.id)
+    message.success('已移除')
+    await refreshLocal()
+  } catch (e: any) {
+    message.error(`删除失败：${e.message}`)
+  }
+}
+
+async function scanDir(d: any) {
+  try {
+    await localAPI.scanDir(d.id)
+    message.success('扫描已开始')
+  } catch (e: any) {
+    message.error(`扫描失败：${e.message}`)
+  }
+}
+
+async function pollLocalStatus() {
+  const s = await localAPI.scanStatus().catch(() => ({ scanning: false }))
+  scanning.value = s.scanning
+}
 
 onMounted(async () => {
   try {
@@ -85,7 +240,16 @@ onMounted(async () => {
     proxy.value = data?.data?.proxy || ''
   } catch {}
   await loadConfigs()
+  await loadLiveSources()
+  await refreshLocal()
+  pollLocalStatus()
+  pollTimer = window.setInterval(async () => {
+    await pollLocalStatus()
+    if (scanning.value) refreshLocal()
+  }, 2000)
 })
+
+onUnmounted(() => clearInterval(pollTimer))
 
 async function saveProxy() {
   try {
@@ -105,6 +269,28 @@ async function loadConfigs() {
   configs.value = res.data || []
 }
 
+async function loadLiveSources() {
+  const res: any = await getLiveSources()
+  liveSources.value = res.data || []
+}
+
+async function checkUrls() {
+  if (!url.value.trim()) return
+  checking.value = true
+  checkResults.value = []
+  try {
+    const urls = url.value.split('\n').map(u => u.trim()).filter(Boolean)
+    const res: any = await checkBatch(urls)
+    checkResults.value = res.results || []
+    const ok = checkResults.value.filter(r => r.available).length
+    message.success(`检测完成: ${ok}/${urls.length} 可用`)
+  } catch (e: any) {
+    message.error('检测失败')
+  } finally {
+    checking.value = false
+  }
+}
+
 async function importUrl() {
   if (!url.value.trim()) return message.warning('请输入URL')
   importing.value = true
@@ -121,11 +307,49 @@ async function importUrl() {
       message.success(`导入完成: ${success} 成功, ${skipped} 跳过, ${errors} 失败`)
     }
     url.value = ''
+    checkResults.value = []
     await loadConfigs()
   } catch (e: any) {
     message.error(e?.response?.data?.detail || '导入失败')
   } finally {
     importing.value = false
+  }
+}
+
+async function checkLiveUrls() {
+  if (!liveUrl.value.trim()) return
+  liveChecking.value = true
+  liveCheckResults.value = []
+  try {
+    const urls = liveUrl.value.split('\n').map(u => u.trim()).filter(Boolean)
+    const res: any = await checkBatch(urls)
+    liveCheckResults.value = res.results || []
+    const ok = liveCheckResults.value.filter(r => r.available).length
+    message.success(`检测完成: ${ok}/${urls.length} 可用`)
+  } catch (e: any) {
+    message.error('检测失败')
+  } finally {
+    liveChecking.value = false
+  }
+}
+
+async function importLiveUrls() {
+  if (!liveUrl.value.trim()) return message.warning('请输入直播源URL')
+  liveImporting.value = true
+  try {
+    const urls = liveUrl.value.split('\n').map(u => u.trim()).filter(Boolean)
+    const items = urls.map(u => ({ url: u, name: '' }))
+    const res: any = await importLiveBatch(items)
+    const success = res.results?.filter((r: any) => r.status === 'success').length || 0
+    const skipped = res.results?.filter((r: any) => r.status === 'skipped').length || 0
+    message.success(`导入完成: ${success} 成功, ${skipped} 跳过`)
+    liveUrl.value = ''
+    liveCheckResults.value = []
+    await loadLiveSources()
+  } catch (e: any) {
+    message.error('导入失败')
+  } finally {
+    liveImporting.value = false
   }
 }
 
@@ -156,19 +380,52 @@ async function remove(id: number) {
   await deleteConfig(id)
   await loadConfigs()
 }
+
+async function toggleLive(id: number) {
+  await toggleLiveSource(id)
+  await loadLiveSources()
+}
+
+async function removeLive(id: number) {
+  await deleteLiveSource(id)
+  await loadLiveSources()
+}
 </script>
 
 <style scoped>
 .settings-page { padding: 20px; max-width: 800px; margin: 0 auto; }
 .page-header h2 { margin: 0 0 20px; }
 .section { margin-bottom: 20px; }
+.btn-row { display: flex; gap: 10px; }
+.check-results { max-height: 300px; overflow-y: auto; border: 1px solid var(--n-border-color); border-radius: 8px; padding: 8px; }
+.check-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 4px; font-size: 12px; }
+.check-item.ok { color: #52c41a; }
+.check-item.fail { color: #ff4d4f; }
+.check-icon { font-weight: bold; flex-shrink: 0; width: 16px; text-align: center; }
+.check-url { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--n-text-color); }
+.check-detail { color: #888; flex-shrink: 0; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.check-count { color: #888; flex-shrink: 0; }
 .config-item { display: flex; align-items: center; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--n-divider-color); }
 .config-item:last-child { border-bottom: none; }
-.config-drag-handle { cursor: grab; opacity: 0.4; display: flex; align-items: center; }
-.config-drag-handle:hover { opacity: 0.8; }
 .config-info { flex: 1; display: flex; align-items: center; gap: 8px; }
 .config-name { font-size: 14px; font-weight: 500; }
 .config-meta { font-size: 11px; color: #888; background: var(--n-divider-color); padding: 1px 6px; border-radius: 3px; }
 .config-actions { display: flex; align-items: center; gap: 8px; }
 .hint { font-size: 12px; color: #888; margin: 0; }
+.stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+.stat-card { background: var(--n-base-color); border: 1px solid var(--n-border-color); border-radius: 10px; padding: 14px; }
+.stat-card .num { font-size: 24px; font-weight: 700; }
+.stat-card .label { font-size: 12px; color: #888; margin-top: 4px; }
+.dir-form { display: flex; gap: 10px; }
+.dir-item { display: flex; align-items: center; gap: 12px; padding: 12px; background: var(--n-base-color); border: 1px solid var(--n-border-color); border-radius: 10px; }
+.dir-info { flex: 1; min-width: 0; }
+.dir-path { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dir-meta { font-size: 12px; color: #888; margin-top: 4px; display: flex; gap: 10px; flex-wrap: wrap; }
+.dir-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.no-config { text-align: center; padding: 24px; color: #888; font-size: 14px; }
+@media (max-width: 640px) {
+  .stats-row { grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .stat-card { padding: 10px; }
+  .stat-card .num { font-size: 18px; }
+}
 </style>

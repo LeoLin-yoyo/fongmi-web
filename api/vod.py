@@ -23,7 +23,7 @@ async def _get_site(site_key: str):
             result = await session.execute(
                 select(SiteModel).where(SiteModel.config_id == cfg.id, SiteModel.key == site_key)
             )
-            db = result.scalar_one_or_none()
+            db = result.scalars().first()
             if db:
                 ext = db.ext or ""
                 if isinstance(ext, dict):
@@ -113,6 +113,20 @@ async def vod_search(wd: str = Query(...)):
         raise
     except Exception as e:
         logger.error(f"vod_search error: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router.get("/search_aggregated")
+async def vod_search_aggregated(wd: str = Query(...)):
+    """Aggregate search returning per-site results + merged"""
+    from spider.search import search_aggregated
+    try:
+        result = await search_aggregated(wd)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"vod_search_aggregated error: {e}")
         raise HTTPException(500, str(e))
 
 

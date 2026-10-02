@@ -14,14 +14,24 @@ router = APIRouter(prefix="/live", tags=["live"])
 from spider.proxy_config import get_proxy_url
 
 _PROXY_URL = get_proxy_url()
+_CACHED_CONFIGS = None
+_CACHED_CONFIGS_TIME = 0.0
+_CONFIG_CACHE_TTL = 60  # 秒
 
 
 async def _get_enabled_configs():
+    global _CACHED_CONFIGS, _CACHED_CONFIGS_TIME
+    import time
+    now = time.time()
+    if _CACHED_CONFIGS is not None and (now - _CACHED_CONFIGS_TIME) < _CONFIG_CACHE_TTL:
+        return _CACHED_CONFIGS
     async with async_session() as session:
         result = await session.execute(
             select(ConfigModel).where(ConfigModel.enabled == 1).order_by(ConfigModel.priority.desc())
         )
-        return result.scalars().all()
+        _CACHED_CONFIGS = result.scalars().all()
+        _CACHED_CONFIGS_TIME = now
+        return _CACHED_CONFIGS
 
 
 async def _fetch_url(url: str) -> str:
@@ -33,11 +43,51 @@ async def _fetch_url(url: str) -> str:
         return resp.text
 
 
+@router.get("/epg")
+async def live_epg(source_idx: int = Query(default=0)):
+    configs = await _get_enabled_configs()
+    all_lives = []
+    for cfg in configs:
+        try:
+            data = json.loads(decrypt_config(cfg.content))
+            lives = data.get("lives", [])
+            for lv in lives:
+                all_lives.append({"name": lv.get("name", ""), "url": lv.get("url", ""), "epg": lv.get("epg", ""), "_config_id": cfg.id})
+        except Exception as e:
+            logger.error(f"live_epg config {cfg.id} error: {e}")
+
+    if source_idx >= len(all_lives):
+        return {"epg": []}
+
+    lv = all_lives[source_idx]
+    epg_url = lv.get("epg", "")
+    if not epg_url:
+        return {"epg": []}
+
+    try:
+        text = await _fetch_url(epg_url)
+        # defusedxml 拒绝 DTD/实体定义，防 XML 实体扩展（billion laughs）
+        from defusedxml import ElementTree as SafeET
+        root = SafeET.fromstring(text)
+        programs = []
+        for prog in root.findall(".//programme"):
+            ch_id = prog.get("channel", "")
+            start = prog.get("start", "")
+            stop = prog.get("stop", "")
+            title_el = prog.find("title")
+            desc_el = prog.find("desc")
+            title = title_el.text if title_el is not None else ""
+            desc = desc_el.text if desc_el is not None else ""
+            programs.append({"channel": ch_id, "start": start, "stop": stop, "title": title, "desc": desc})
+        return {"epg": programs}
+    except Exception as e:
+        logger.error(f"live_epg fetch error: {e}")
+        return {"epg": []}
+
+
 @router.get("/groups")
 async def live_groups():
     configs = await _get_enabled_configs()
-    if not configs:
-        return []
 
     all_lives = []
     for cfg in configs:
@@ -52,9 +102,30 @@ async def live_groups():
                     "epg": lv.get("epg", ""),
                     "_config_id": cfg.id,
                     "_config_name": cfg.name,
+                    "_source_type": "config",
                 })
         except Exception as e:
             logger.error(f"live_groups config {cfg.id} error: {e}")
+
+    # 合并直接导入的直播源
+    from model.database import async_session, LiveSource as LiveSourceModel
+    from sqlalchemy import select
+    async with async_session() as session:
+        result = await session.execute(
+            select(LiveSourceModel).where(LiveSourceModel.enabled == 1).order_by(LiveSourceModel.priority.desc())
+        )
+        sources = result.scalars().all()
+        for s in sources:
+            all_lives.append({
+                "name": s.name,
+                "type": 0,
+                "url": s.url,
+                "epg": "",
+                "_config_id": s.id,
+                "_config_name": s.name,
+                "_source_type": "direct",
+                "_direct_id": s.id,
+            })
 
     return all_lives
 
@@ -62,8 +133,6 @@ async def live_groups():
 @router.get("/channels")
 async def live_channels(source_idx: int = Query(default=0)):
     configs = await _get_enabled_configs()
-    if not configs:
-        return []
 
     all_lives = []
     for cfg in configs:
@@ -71,9 +140,20 @@ async def live_channels(source_idx: int = Query(default=0)):
             data = json.loads(decrypt_config(cfg.content))
             lives = data.get("lives", [])
             for lv in lives:
-                all_lives.append({"name": lv.get("name", ""), "url": lv.get("url", ""), "type": lv.get("type", 0), "_config_id": cfg.id})
+                all_lives.append({"name": lv.get("name", ""), "url": lv.get("url", ""), "type": lv.get("type", 0), "_config_id": cfg.id, "_source_type": "config"})
         except Exception as e:
             logger.error(f"live_channels config {cfg.id} error: {e}")
+
+    # 合并直接导入的直播源
+    from model.database import async_session, LiveSource as LiveSourceModel
+    from sqlalchemy import select
+    async with async_session() as session:
+        result = await session.execute(
+            select(LiveSourceModel).where(LiveSourceModel.enabled == 1).order_by(LiveSourceModel.priority.desc())
+        )
+        sources = result.scalars().all()
+        for s in sources:
+            all_lives.append({"name": s.name, "url": s.url, "type": 0, "_config_id": s.id, "_source_type": "direct"})
 
     if source_idx >= len(all_lives):
         return []
@@ -82,6 +162,20 @@ async def live_channels(source_idx: int = Query(default=0)):
     url = lv.get("url", "")
     if not url:
         return []
+
+    if lv.get("_source_type") == "direct":
+        from api.live_source import _parse_m3u_groups, _parse_json_groups, _parse_txt_groups
+        try:
+            text = await _fetch_url(url)
+            if "#EXTM3U" in text or "#EXTINF" in text:
+                return _parse_m3u_groups(text)
+            elif text.strip().startswith("["):
+                return _parse_json_groups(text)
+            else:
+                return _parse_txt_groups(text)
+        except Exception as e:
+            logger.error(f"live_channels direct fetch error: {e}")
+            return []
 
     try:
         text = await _fetch_url(url)

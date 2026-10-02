@@ -180,6 +180,10 @@ class _SyncFetch:
 
 
 class SpiderJSRuntime:
+    # quickjs 绑定存在进程级共享 C 状态（module.c 线程断言），任何两个 Context 的
+    # eval/call 并发执行都会直接 abort 整个进程 —— 全局串行化是硬性要求
+    _QJS_LOCK = threading.Lock()
+
     def __init__(self):
         self.ctx = quickjs.Context()
         self._logs: list[str] = []
@@ -298,7 +302,8 @@ class SpiderJSRuntime:
 
     def load_spider(self, js_code: str):
         try:
-            self.ctx.eval(js_code)
+            with SpiderJSRuntime._QJS_LOCK:
+                self.ctx.eval(js_code)
             logger.debug("JS spider loaded successfully")
         except quickjs.JSException as e:
             logger.error(f"Load JS spider failed: {e}")
@@ -318,33 +323,40 @@ class SpiderJSRuntime:
 
         def _run():
             try:
-                fn = self.ctx.get(method)
-                if fn is None:
-                    result[0] = {}
+                # 全局锁内执行 quickjs；拿不到锁说明有别的 JS 调用在跑，直接返回 busy
+                if not SpiderJSRuntime._QJS_LOCK.acquire(timeout=timeout):
+                    result[0] = {"error": "busy"}
                     return
-                js_args = [self._to_js_arg(a) for a in args]
-                raw = fn(*js_args)
-                if raw is None:
-                    result[0] = {}
-                elif isinstance(raw, (int, float, bool)):
-                    result[0] = raw
-                elif isinstance(raw, str):
-                    if raw.strip().startswith(("{", "[")):
-                        try:
-                            result[0] = json.loads(raw)
-                        except json.JSONDecodeError:
+                try:
+                    fn = self.ctx.get(method)
+                    if fn is None:
+                        result[0] = {}
+                        return
+                    js_args = [self._to_js_arg(a) for a in args]
+                    raw = fn(*js_args)
+                    if raw is None:
+                        result[0] = {}
+                    elif isinstance(raw, (int, float, bool)):
+                        result[0] = raw
+                    elif isinstance(raw, str):
+                        if raw.strip().startswith(("{", "[")):
+                            try:
+                                result[0] = json.loads(raw)
+                            except json.JSONDecodeError:
+                                result[0] = raw
+                        else:
                             result[0] = raw
                     else:
-                        result[0] = raw
-                else:
-                    s = str(raw)
-                    if s.startswith(("{", "[")):
-                        try:
-                            result[0] = json.loads(s)
-                        except json.JSONDecodeError:
+                        s = str(raw)
+                        if s.startswith(("{", "[")):
+                            try:
+                                result[0] = json.loads(s)
+                            except json.JSONDecodeError:
+                                result[0] = s
+                        else:
                             result[0] = s
-                    else:
-                        result[0] = s
+                finally:
+                    SpiderJSRuntime._QJS_LOCK.release()
             except quickjs.JSException as e:
                 error[0] = e
             except Exception as e:

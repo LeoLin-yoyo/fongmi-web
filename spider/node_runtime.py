@@ -6,6 +6,8 @@ import threading
 import time
 import urllib.request
 
+from spider.net import ensure_http_url
+
 _NODE_PROC = None
 _LOCK = threading.Lock()
 
@@ -37,7 +39,8 @@ def _ensure_node():
 
 def _post(payload):
     data = json.dumps(payload).encode()
-    req = urllib.request.Request("http://127.0.0.1:19999/", data=data, headers={"Content-Type": "application/json"})
+    node_url = ensure_http_url("http://127.0.0.1:19999/", allow_private=True)
+    req = urllib.request.Request(node_url, data=data, headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=35) as resp:
             return json.loads(resp.read())

@@ -4,6 +4,8 @@ import ssl
 import httpx
 from loguru import logger
 
+from spider.net import ensure_http_url
+
 
 _SSL_CTX = ssl.create_default_context()
 _SSL_CTX.check_hostname = False
@@ -25,10 +27,11 @@ class HttpSpider:
 
     def _build_url(self, params: dict = None) -> str:
         base = self.api_url.split("?")[0].rstrip("/") if "?" in self.api_url else self.api_url.rstrip("/")
-        vod_path = "api.php/provide/vod"
-        if vod_path not in base:
-            base = base + "/" + vod_path + "/"
+        # 仅裸域名补默认路径；配置已带 API 路径（如 api.php/seaxml/vod）时原样使用，
+        # 否则会拼出 .../seaxml/vod/api.php/provide/vod/ 这类失效地址
         import urllib.parse
+        if not urllib.parse.urlparse(base).path.strip("/"):
+            base = base + "/api.php/provide/vod/"
         query = ""
         if params:
             clean = {k: str(v) for k, v in params.items() if v is not None}
@@ -38,6 +41,7 @@ class HttpSpider:
 
     def _fetch(self, url: str) -> str:
         import urllib.request
+        ensure_http_url(url)
         req = urllib.request.Request(url, headers=self._headers)
         try:
             with urllib.request.urlopen(req, timeout=15, context=_SSL_CTX) as resp:

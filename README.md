@@ -57,11 +57,18 @@ fongmi-web/
 ├── api/                    # API routes
 │   ├── vod.py              # VOD endpoints
 │   ├── live.py             # Live TV endpoints
+│   ├── live_source.py      # Live source fetching & parsing
 │   ├── decoder.py          # Config decryption
 │   ├── player.py           # Media proxy
 │   ├── image.py            # Image proxy (CORS)
 │   ├── history.py          # History & Keep CRUD
-│   └── system.py           # System config
+│   ├── metrics.py          # Runtime metrics
+│   ├── system.py           # System config
+│   └── tests/              # Backend tests (pytest)
+├── local_video/            # Local video scan & streaming module
+│   ├── scanner.py          # Filesystem scanner
+│   ├── streaming.py        # Range-request streaming
+│   └── tests/              # Module tests (pytest)
 ├── spider/                 # Data fetching engine
 │   ├── http_spider.py      # Type=1 HTTP API spider
 │   ├── search.py           # Multi-site search
@@ -72,9 +79,11 @@ fongmi-web/
 │   └── bean.py             # Pydantic schemas
 ├── data/                   # Runtime data (gitignored)
 └── frontend/               # Vue 3 SPA
+    ├── e2e/                # Playwright E2E tests
     └── src/
         ├── views/          # Page components
         ├── api/            # HTTP client
+        ├── composables/    # Player / danmaku composables
         ├── stores/         # Reactive stores
         └── router/         # Vue Router
 ```

@@ -76,6 +76,20 @@ class History(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
 
 
+class LiveSource(Base):
+    __tablename__ = "live_source"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(255), default="")
+    url: Mapped[str] = mapped_column(String(1024), default="")
+    type: Mapped[str] = mapped_column(String(16), default="m3u")
+    enabled: Mapped[int] = mapped_column(Integer, default=1)
+    priority: Mapped[int] = mapped_column(Integer, default=0)
+    group_count: Mapped[int] = mapped_column(Integer, default=0)
+    channel_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+
+
 class Keep(Base):
     __tablename__ = "keep"
 

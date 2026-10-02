@@ -72,6 +72,9 @@
                   :class="['channel-item', { active: currentChannel?.name === ch.name }]"
                   @click="playChannel(ch)"
                 >
+                  <button class="ch-fav" @click.stop="toggleFavorite(ch.name)" :title="isFavorite(ch.name) ? '取消收藏' : '收藏'">
+                    {{ isFavorite(ch.name) ? '★' : '☆' }}
+                  </button>
                   <span class="ch-name">{{ ch.name }}</span>
                   <span class="ch-lines-badge" v-if="ch.urls && ch.urls.length > 1">{{ ch.urls.length }}路</span>
                   <span v-if="currentChannel?.name === ch.name && isPlaying" class="ch-live">● LIVE</span>
@@ -81,7 +84,8 @@
           </template>
 
           <div v-if="!flatChannels.length" class="no-channels">
-            <p>该源无频道数据</p>
+            <p v-if="!sources.length">暂无直播源，请先到「设置」导入直播订阅</p>
+            <p v-else>该源无频道数据，可在「设置」中更换直播源</p>
           </div>
           <div v-if="searchQuery && filteredChannels.length === 0 && flatChannels.length > 0" class="no-channels">
             <p>未找到匹配的频道</p>
@@ -122,6 +126,22 @@
             <div class="buffering-spinner"></div>
             <span class="buffering-text" v-if="downloadSpeed">{{ downloadSpeed }}</span>
           </div>
+          <div class="epg-panel">
+            <div v-if="epgLoading" class="epg-loading">加载节目单...</div>
+            <template v-else-if="epgPrograms.length > 0">
+              <div class="epg-now" v-if="nowProgram">
+                <span class="epg-label">现在</span>
+                <span class="epg-title">{{ nowProgram.title }}</span>
+                <span class="epg-time">{{ formatEpgTime(nowProgram.start) }} - {{ formatEpgTime(nowProgram.stop) }}</span>
+              </div>
+              <div class="epg-next" v-if="nextProgram">
+                <span class="epg-label">接下来</span>
+                <span class="epg-title">{{ nextProgram.title }}</span>
+                <span class="epg-time">{{ formatEpgTime(nextProgram.start) }}</span>
+              </div>
+            </template>
+            <div v-else class="epg-empty">暂无节目信息</div>
+          </div>
         </div>
         <div v-else class="player-placeholder">
           <p>选择左侧频道开始播放</p>
@@ -146,6 +166,11 @@ const loading = ref(false)
 const loadingSource = ref(-1)
 const searchQuery = ref('')
 const collapsedGroups = ref<Record<string, boolean>>({})
+
+const allEpgData = ref<{ channel: string; start: string; stop: string; title: string; desc: string }[]>([])
+const epgLoading = ref(false)
+const epgFetched = ref(false)
+const favoriteChannels = ref<string[]>([])
 
 const { videoRef, videoResolution, bufferPercent, isBuffering, downloadSpeed, initPlayer, setupVideoEvents, resetVideoInfo, useProxy } = usePlayer()
 
@@ -189,6 +214,85 @@ const filteredChannels = computed(() => {
     .filter(group => group.channels.length > 0)
 })
 
+const currentChannelPrograms = computed(() => {
+  if (!currentChannel.value || !allEpgData.value.length) return []
+  return allEpgData.value.filter(p => {
+    const chName = currentChannel.value.name.toLowerCase()
+    return p.channel.toLowerCase().includes(chName) || chName.includes(p.channel.toLowerCase())
+  })
+})
+
+const nowProgram = computed(() => {
+  const now = new Date()
+  return currentChannelPrograms.value.find(p => {
+    const start = parseEpgTime(p.start)
+    const stop = parseEpgTime(p.stop)
+    return start <= now && stop >= now
+  })
+})
+
+const nextProgram = computed(() => {
+  const now = new Date()
+  const upcoming = currentChannelPrograms.value
+    .filter(p => parseEpgTime(p.start) > now)
+    .sort((a, b) => parseEpgTime(a.start).getTime() - parseEpgTime(b.start).getTime())
+  return upcoming[0] || null
+})
+
+const epgPrograms = computed(() => currentChannelPrograms.value)
+
+function parseEpgTime(t: string): Date {
+  if (!t) return new Date(0)
+  const y = t.substring(0, 4)
+  const m = t.substring(4, 6)
+  const d = t.substring(6, 8)
+  const hh = t.substring(8, 10)
+  const mm = t.substring(10, 12)
+  const ss = t.substring(12, 14)
+  return new Date(`${y}-${m}-${d}T${hh}:${mm}:${ss}`)
+}
+
+function formatEpgTime(t: string): string {
+  try {
+    const d = parseEpgTime(t)
+    return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  } catch { return t }
+}
+
+async function loadEpg() {
+  if (epgFetched.value) return
+  epgLoading.value = true
+  try {
+    const { liveAPI } = await import('@/api/vod')
+    const res: any = await liveAPI.epg(currentSource.value)
+    allEpgData.value = res?.epg || []
+    epgFetched.value = true
+  } catch { allEpgData.value = [] }
+  finally { epgLoading.value = false }
+}
+
+function loadFavorites() {
+  try {
+    const saved = localStorage.getItem('fongmi_live_favorites')
+    favoriteChannels.value = saved ? JSON.parse(saved) : []
+  } catch { favoriteChannels.value = [] }
+}
+
+function saveFavorites() {
+  localStorage.setItem('fongmi_live_favorites', JSON.stringify(favoriteChannels.value))
+}
+
+function toggleFavorite(chName: string) {
+  const idx = favoriteChannels.value.indexOf(chName)
+  if (idx >= 0) favoriteChannels.value.splice(idx, 1)
+  else favoriteChannels.value.push(chName)
+  saveFavorites()
+}
+
+function isFavorite(chName: string) {
+  return favoriteChannels.value.includes(chName)
+}
+
 const allCollapsed = computed(() => {
   const groups = filteredChannels.value
   if (!groups.length) return false
@@ -224,6 +328,7 @@ function playChannel(ch: any) {
     setupVideoEvents()
     initPlayer(ch.urls[0], currentHeaders.value)
   })
+  if (!epgFetched.value) setTimeout(() => loadEpg(), 1000)
 }
 
 function switchLine() {
@@ -252,6 +357,7 @@ function toggleProxy() {
 }
 
 onMounted(async () => {
+  loadFavorites()
   await loadSources()
   if (sources.value.length > 0) {
     await loadChannels(0)
@@ -366,8 +472,20 @@ async function loadChannels(idx: number) {
 .channel-item.active { background: rgba(0,122,255,0.1); color: var(--n-primary-color); }
 .ch-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ch-lines-badge { font-size: 10px; color: #888; background: var(--n-divider-color); padding: 1px 6px; border-radius: 8px; flex-shrink: 0; }
+.ch-fav { background: none; border: none; cursor: pointer; font-size: 14px; color: #888; padding: 0 2px; flex-shrink: 0; line-height: 1; }
+.ch-fav:hover { color: #ffd700; }
 .ch-live { font-size: 10px; color: #f5222d; animation: blink 1.5s infinite; flex-shrink: 0; }
 @keyframes blink { 50% { opacity: 0.3; } }
+
+.epg-panel { position: absolute; bottom: 0; left: 0; right: 0; padding: 10px 14px; background: linear-gradient(to top, rgba(0,0,0,0.8), transparent); pointer-events: none; }
+.epg-loading { font-size: 12px; color: #888; }
+.epg-now, .epg-next { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 2px; }
+.epg-label { font-size: 10px; padding: 1px 6px; border-radius: 4px; flex-shrink: 0; }
+.epg-now .epg-label { background: rgba(255,80,80,0.8); color: #fff; }
+.epg-next .epg-label { background: rgba(255,255,255,0.15); color: #aaa; }
+.epg-title { color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.epg-time { font-size: 11px; color: #888; flex-shrink: 0; }
+.epg-empty { font-size: 12px; color: #555; }
 
 .no-channels { padding: 40px 0; text-align: center; }
 .no-channels p { color: #888; }

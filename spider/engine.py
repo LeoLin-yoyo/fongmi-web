@@ -6,6 +6,8 @@ import urllib.request
 from collections import OrderedDict
 from loguru import logger
 
+from spider.net import ensure_http_url
+
 try:
     from model.bean import Site
 except ImportError:
@@ -75,8 +77,13 @@ def _get_builtin_spider(api: str, ext: str):
         class_name = api if api.startswith("csp_") else "csp_" + api
         try:
             fn = rt.ctx.get("loadCspSpider")
-            if fn and fn(class_name, ext):
-                return rt
+            if fn:
+                # quickjs 非线程安全，直接执行也必须持全局锁
+                from spider.js_runtime import SpiderJSRuntime as _SJR
+                with _SJR._QJS_LOCK:
+                    ok = fn(class_name, ext)
+                if ok:
+                    return rt
         except Exception:
             pass
     except Exception as e:

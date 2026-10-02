@@ -23,6 +23,14 @@ class ReorderRequest(BaseModel):
     ids: List[int]
 
 
+class CheckUrlRequest(BaseModel):
+    url: str
+
+
+class CheckBatchRequest(BaseModel):
+    urls: List[str]
+
+
 class PriorityRequest(BaseModel):
     priority: int
 
@@ -117,13 +125,23 @@ async def import_config(
 
     try:
         decrypted = decrypt_config(raw_content)
-        data = json.loads(decrypted)
+        # 使用 strict=False 允许字符串值中包含原始换行等控制字符
+        data = json.loads(decrypted, strict=False)
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="JSON 格式错误，请检查配置内容")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"解密失败: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"配置解析失败: {str(e)}")
+
+    # 检测多仓格式（urls 数组，每个元素有 name + url）
+    if isinstance(data, dict) and "urls" in data and isinstance(data["urls"], list) and not data.get("sites"):
+        sub_urls = [u["url"] for u in data["urls"] if isinstance(u, dict) and u.get("url")]
+        if sub_urls:
+            raise HTTPException(
+                status_code=400,
+                detail=f"检测到多仓格式，包含 {len(sub_urls)} 个子配置链接。请使用批量导入单独导入各子链接，或使用 /api/config/import_batch 导入全部。",
+            )
 
     cfg = await parse_config(data)
     cfg_hash = compute_hash(raw_content)
@@ -192,28 +210,87 @@ async def import_config(
 
 @router.post("/import_batch")
 async def import_configs(body: BatchImportRequest, db: AsyncSession = Depends(get_db)):
-    """批量导入多个 URL"""
+    """批量导入多个 URL，自动检测可用性，不可用的跳过"""
     results = []
     for url in body.urls:
         url = url.strip()
         if not url:
             continue
+
+        # 先检测可用性
         try:
-            async with httpx.AsyncClient(timeout=30, follow_redirects=True, verify=False) as client:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True, verify=False) as client:
                 resp = await client.get(url)
                 resp.raise_for_status()
                 raw_content = resp.text
+        except httpx.TimeoutException:
+            results.append({"url": url, "status": "skipped", "detail": "Connection timeout, skipped"})
+            continue
+        except httpx.ConnectError:
+            results.append({"url": url, "status": "skipped", "detail": "Connection refused, skipped"})
+            continue
+        except httpx.HTTPStatusError as e:
+            results.append({"url": url, "status": "skipped", "detail": f"HTTP {e.response.status_code}, skipped"})
+            continue
+        except Exception as e:
+            results.append({"url": url, "status": "skipped", "detail": f"Network error: {str(e)[:50]}, skipped"})
+            continue
 
-            if not raw_content.strip():
-                results.append({"url": url, "status": "error", "detail": "Empty content"})
-                continue
+        if not raw_content.strip():
+            results.append({"url": url, "status": "skipped", "detail": "Empty content, skipped"})
+            continue
 
-            if raw_content.strip().startswith("<!DOCTYPE") or raw_content.strip().startswith("<html"):
-                results.append({"url": url, "status": "error", "detail": "HTML page, not a config"})
-                continue
+        if raw_content.strip().startswith("<!DOCTYPE") or raw_content.strip().startswith("<html"):
+            results.append({"url": url, "status": "skipped", "detail": "HTML page, skipped"})
+            continue
 
+        try:
             decrypted = decrypt_config(raw_content)
             data = json.loads(decrypted)
+
+            # 多仓格式：提取子链接并递归导入
+            if isinstance(data, dict) and "urls" in data and isinstance(data["urls"], list) and not data.get("sites"):
+                sub_urls = [u["url"] for u in data["urls"] if isinstance(u, dict) and u.get("url")]
+                if sub_urls:
+                    sub_results = []
+                    for sub_url in sub_urls:
+                        try:
+                            async with httpx.AsyncClient(timeout=15, follow_redirects=True, verify=False) as client:
+                                sub_resp = await client.get(sub_url)
+                                sub_resp.raise_for_status()
+                                sub_raw = sub_resp.text
+                            sub_decrypted = decrypt_config(sub_raw)
+                            sub_data = json.loads(sub_decrypted)
+                            sub_cfg = await parse_config(sub_data)
+                            sub_hash = compute_hash(sub_raw)
+                            sub_existing = await db.execute(select(ConfigModel).where(ConfigModel.hash == sub_hash))
+                            if sub_existing.scalar_one_or_none():
+                                sub_results.append({"url": sub_url, "status": "skipped", "detail": "Already exists"})
+                                continue
+                            sub_name = sub_data.get("name", "") or sub_data.get("wall", "") or sub_url
+                            sub_config_type = "vod"
+                            if not sub_cfg.sites and sub_cfg.lives:
+                                sub_config_type = "live"
+                            if not sub_cfg.sites and not sub_cfg.lives:
+                                sub_results.append({"url": sub_url, "status": "skipped", "detail": "No sites/lives"})
+                                continue
+                            max_p_result = await db.execute(select(ConfigModel).order_by(ConfigModel.priority.desc()).limit(1))
+                            max_p = max_p_result.scalar_one_or_none()
+                            next_priority = (max_p.priority + 1) if max_p else 0
+                            sub_entry = ConfigModel(name=sub_name, url=sub_url, type=sub_config_type, content=sub_raw, hash=sub_hash, enabled=1, priority=next_priority)
+                            db.add(sub_entry)
+                            await db.flush()
+                            for s in sub_cfg.sites:
+                                db.add(SiteModel(config_id=sub_entry.id, key=s.key, name=s.name, type=s.type, api=s.api, ext=s.get_ext_str(), player_type=s.playerType, searchable=s.searchable, quick_search=s.quickSearch, filterable=s.filterable))
+                            for p in sub_cfg.parses:
+                                db.add(ParseModel(config_id=sub_entry.id, name=p.name, url=p.url, type=p.type, ext=json.dumps(p.ext, ensure_ascii=False) if isinstance(p.ext, dict) else str(p.ext)))
+                            await db.commit()
+                            sub_results.append({"url": sub_url, "status": "success", "site_count": len(sub_cfg.sites), "detail": ""})
+                        except Exception as sub_e:
+                            sub_results.append({"url": sub_url, "status": "skipped", "detail": str(sub_e)[:80]})
+                    results.append({"url": url, "status": "success", "detail": f"多仓: {len(sub_results)} 个子链接", "sub_results": sub_results})
+                    continue
+
             cfg = await parse_config(data)
             cfg_hash = compute_hash(raw_content)
 
@@ -226,6 +303,10 @@ async def import_configs(body: BatchImportRequest, db: AsyncSession = Depends(ge
             config_type = "vod"
             if not cfg.sites and cfg.lives:
                 config_type = "live"
+
+            if not cfg.sites and not cfg.lives:
+                results.append({"url": url, "status": "skipped", "detail": "No sites or lives, skipped"})
+                continue
 
             max_p_result = await db.execute(select(ConfigModel).order_by(ConfigModel.priority.desc()).limit(1))
             max_p = max_p_result.scalar_one_or_none()
@@ -243,12 +324,112 @@ async def import_configs(body: BatchImportRequest, db: AsyncSession = Depends(ge
 
             await db.commit()
             results.append({"url": url, "status": "success", "site_count": len(cfg.sites), "detail": ""})
-        except HTTPException as e:
-            results.append({"url": url, "status": "error", "detail": e.detail})
+        except json.JSONDecodeError:
+            results.append({"url": url, "status": "skipped", "detail": "JSON parse failed, skipped"})
         except Exception as e:
             results.append({"url": url, "status": "error", "detail": str(e)})
 
     return {"code": 0, "results": results}
+
+
+@router.post("/check_url")
+async def check_url(body: CheckUrlRequest):
+    """检查单个订阅源 URL 是否可用"""
+    url = body.url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="URL is empty")
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True, verify=False) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            raw_content = resp.text
+        if not raw_content.strip():
+            return {"code": 1, "available": False, "detail": "Empty content"}
+        is_html = raw_content.strip().startswith("<!DOCTYPE") or raw_content.strip().startswith("<html")
+        if is_html:
+            return {"code": 1, "available": False, "detail": "URL returns HTML page, not a config"}
+        try:
+            decrypted = decrypt_config(raw_content)
+            data = json.loads(decrypted)
+            has_sites = len(data.get("sites", [])) > 0
+            has_lives = len(data.get("lives", [])) > 0
+            if not has_sites and not has_lives:
+                return {"code": 1, "available": False, "detail": "Config has no sites or lives"}
+            return {
+                "code": 0,
+                "available": True,
+                "detail": "OK",
+                "name": data.get("name", "") or data.get("wall", "") or "",
+                "site_count": len(data.get("sites", [])),
+                "live_count": len(data.get("lives", [])),
+                "parse_count": len(data.get("parses", [])),
+                "is_vod": has_sites,
+                "is_live": has_lives and not has_sites,
+            }
+        except (json.JSONDecodeError, ValueError) as e:
+            return {"code": 1, "available": False, "detail": f"Parse failed: {str(e)}"}
+    except httpx.TimeoutException:
+        return {"code": 1, "available": False, "detail": "Connection timeout"}
+    except httpx.ConnectError:
+        return {"code": 1, "available": False, "detail": "Connection refused"}
+    except httpx.HTTPStatusError as e:
+        return {"code": 1, "available": False, "detail": f"HTTP {e.response.status_code}"}
+    except Exception as e:
+        return {"code": 1, "available": False, "detail": str(e)}
+
+
+@router.post("/check_batch")
+async def check_batch(body: CheckBatchRequest):
+    """批量检查多个订阅源 URL 是否可用"""
+    import asyncio
+    async def check_one(url: str):
+        try:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True, verify=False) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                raw_content = resp.text
+            if not raw_content.strip():
+                return {"url": url, "available": False, "detail": "Empty content"}
+            is_html = raw_content.strip().startswith("<!DOCTYPE") or raw_content.strip().startswith("<html")
+            if is_html:
+                return {"url": url, "available": False, "detail": "HTML page"}
+            decrypted = decrypt_config(raw_content)
+            data = json.loads(decrypted)
+            # 多仓格式
+            if isinstance(data, dict) and "urls" in data and isinstance(data["urls"], list) and not data.get("sites"):
+                sub_urls = [u["url"] for u in data["urls"] if isinstance(u, dict) and u.get("url")]
+                return {
+                    "url": url,
+                    "available": True,
+                    "detail": f"多仓格式, {len(sub_urls)} 子链接",
+                    "name": data.get("name", "") or "",
+                    "site_count": 0,
+                    "live_count": 0,
+                    "is_multi_warehouse": True,
+                    "sub_urls": sub_urls,
+                }
+            has_sites = len(data.get("sites", [])) > 0
+            has_lives = len(data.get("lives", [])) > 0
+            return {
+                "url": url,
+                "available": has_sites or has_lives,
+                "detail": "OK" if (has_sites or has_lives) else "No sites/lives",
+                "name": data.get("name", "") or data.get("wall", "") or "",
+                "site_count": len(data.get("sites", [])),
+                "live_count": len(data.get("lives", [])),
+            }
+        except Exception as e:
+            return {"url": url, "available": False, "detail": str(e)}
+
+    tasks = [check_one(url.strip()) for url in body.urls if url.strip()]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    final = []
+    for r in results:
+        if isinstance(r, Exception):
+            final.append({"url": "", "available": False, "detail": str(r)})
+        else:
+            final.append(r)
+    return {"code": 0, "results": final}
 
 
 @router.delete("/{config_id}")

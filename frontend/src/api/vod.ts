@@ -9,6 +9,8 @@ export const vodAPI = {
     request.get('/vod/detail', { params: { site_key: siteKey, ids } }),
   search: (wd: string) =>
     request.get('/vod/search', { params: { wd } }),
+  searchAggregated: (wd: string) =>
+    request.get('/vod/search_aggregated', { params: { wd } }),
   player: (siteKey: string, flag: string, id: string) =>
     request.get('/vod/player', { params: { site_key: siteKey, flag, id } }),
   vodSites: () => request.get('/vod_sites'),
@@ -17,10 +19,12 @@ export const vodAPI = {
 export const liveAPI = {
   groups: () => request.get('/live/groups'),
   channels: (sourceIdx: number) => request.get('/live/channels', { params: { source_idx: sourceIdx } }),
+  epg: (sourceIdx: number) => request.get('/live/epg', { params: { source_idx: sourceIdx } }),
 }
 
 export const historyAPI = {
-  list: (page = 1, size = 20) => request.get('/history', { params: { page, size } }),
+  list: (page = 1, size = 50) => request.get('/history', { params: { page, size } }),
+  check: (siteKey: string, vodId: string) => request.get('/history/check', { params: { site_key: siteKey, vod_id: vodId } }),
   add: (data: any) => request.post('/history', data),
   update: (data: any) => request.put('/history', data),
   delete: (id: number) => request.delete(`/history/${id}`),

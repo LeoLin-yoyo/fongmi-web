@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
+.pytest_cache/
 dist/
 build/
 *.egg
@@ -9,29 +10,26 @@ build/
 venv/
 env/
 
-# Database & config (user data)
+# Database & runtime data (user data)
 *.db
 *.sqlite
-data/config.json
-data/fongmi.db
+data/
 
 # Logs
 *.log
 
-# Dev / setup files (local-only)
+# Local dev / one-off files
 test_sub.json
 setup_db.py
-final_check.py
-_run_server.py
-test_*.py
-e2e_test.py
-test_screenshots/
-server*.log
 op-tg-start.bat
+
+# Test artifacts (root-level screenshots etc.)
+/*.png
+test_screenshots/
+frontend/test-screenshots/
 
 # Node
 node_modules/
-frontend/node_modules/
 
 # IDE
 .vscode/
@@ -44,11 +42,15 @@ frontend/node_modules/
 .DS_Store
 Thumbs.db
 
-# Frontend build
+# Frontend build & test output
 frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
 
-# Internal project docs
+# Internal project docs & tool state (local-only)
 conductor/
 docs/
-*.png
+us/
 front/
+.mimosa/
+frontend/.mimosa/

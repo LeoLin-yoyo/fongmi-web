@@ -11,6 +11,11 @@ declare module 'flv.js' {
   export default flvjs
 }
 
+declare module 'plyr' {
+  const Plyr: any
+  export default Plyr
+}
+
 interface Window {
   $message: import('naive-ui').MessageApi
 }

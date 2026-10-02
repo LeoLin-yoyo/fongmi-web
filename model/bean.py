@@ -37,7 +37,7 @@ class Parse(BaseModel):
 
 
 class Live(BaseModel):
-    name: str
+    name: str = ""
     type: int = 0
     url: str = ""
     epg: str = ""

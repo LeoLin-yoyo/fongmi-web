@@ -9,7 +9,7 @@
       <div class="video-grid">
         <div v-for="video in videos" :key="video.vod_id" class="video-card" @click="goDetail(video.vod_id)">
           <div class="card-cover">
-            <img :src="imgUrl(video.vod_pic) || defaultPic" loading="lazy" />
+            <img :src="imgUrl(video.vod_pic, video.vod_name) || defaultPic" loading="lazy" />
             <div v-if="video.vod_remarks" class="cover-badge">{{ video.vod_remarks }}</div>
             <div class="cover-overlay"><span class="play-icon">▶</span></div>
           </div>
@@ -25,12 +25,12 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { NButton, NSpin, NEmpty, NPagination } from 'naive-ui'
 import { imgUrl } from '@/api/img'
+import { openInNewTab } from '@/utils/navigation'
 
 const route = useRoute()
-const router = useRouter()
 const siteKey = ref('')
 const tid = ref('')
 const typeName = ref('')
@@ -60,7 +60,7 @@ async function loadPage(pg: number) {
 }
 
 function goDetail(id: string) {
-  router.push(`/detail/${siteKey.value}/${id}`)
+  openInNewTab({ path: `/detail/${siteKey.value}/${id}`, query: { autoplay: '1' } })
 }
 </script>
 

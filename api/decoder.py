@@ -13,6 +13,10 @@ def decrypt_config(raw_data: str) -> str:
     if not raw_data:
         raise ValueError("配置数据为空")
 
+    # 移除 UTF-8 BOM
+    if raw_data.startswith("\ufeff"):
+        raw_data = raw_data[1:].strip()
+
     # 已经是 JSON
     if raw_data.startswith("{") or raw_data.startswith("["):
         return raw_data
@@ -66,11 +70,15 @@ def _cbc_decrypt(hex_data: str) -> str:
 
 
 def _base64_decode(data: str) -> str:
-    """从 ** 标记后提取 Base64 内容并解码"""
+    """从 ** 标记后提取 Base64 内容并解码（自动填充缺失的 =）"""
     match = re.search(r"[A-Za-z0-9]{8}\*\*", data)
     if not match:
         return data
     b64_part = data[match.end() :]
+    # 修复 Base64 填充：长度必须是 4 的倍数
+    remainder = len(b64_part) % 4
+    if remainder:
+        b64_part += "=" * (4 - remainder)
     return base64.b64decode(b64_part).decode("utf-8")
 
 
