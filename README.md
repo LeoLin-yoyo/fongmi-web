@@ -22,7 +22,7 @@ FastAPI × Vue 3 全栈实现 · 点播聚合 · IPTV 直播 · 弹幕字幕 · 
 
 手机上那套已经调好的订阅，复制一个链接过来，站点、直播源原样照搬。
 
-## ✨ 为什么值得一个 Star
+## ✨ 项目特色
 
 - 🔌 **无缝兼容 FongMi 生态** — 直接导入 FongMi TV 订阅链接，AES-128-CBC 加密配置自动解密；多个订阅一起导入，站点自动合并去重
 - 🕷️ **双引擎爬虫架构** — HTTP API 站点（Type=1）直连秒搜；JS 爬虫（Type=0）内嵌 QuickJS 沙箱执行，Node.js 常驻进程兜底，FongMi 系 JS 站点照样跑
@@ -240,6 +240,3 @@ python -m uvicorn main:app --host 0.0.0.0 --port 9000
 
 [MIT](LICENSE)
 
-## 🌟 Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=LeoLin-yoyo/fongmi-web&type=Date)](https://star-history.com/#LeoLin-yoyo/fongmi-web&Date)
