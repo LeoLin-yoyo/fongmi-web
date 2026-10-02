@@ -8,3 +8,5 @@ httpx[socks]>=0.28.0
 pycryptodome>=3.21.0
 pypinyin>=0.55.0
 defusedxml>=0.7.1
+loguru>=0.7.0
+quickjs>=1.19.0
