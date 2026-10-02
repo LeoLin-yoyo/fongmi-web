@@ -22,6 +22,7 @@ data/
 test_sub.json
 setup_db.py
 op-tg-start.bat
+COMMIT_MSG.txt
 
 # Test artifacts (root-level screenshots etc.)
 /*.png
