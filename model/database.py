@@ -117,6 +117,24 @@ async def init_db():
             )
             await session.commit()
 
+        # 回填历史遗留的占位名：早期导入把无 name 字段的配置统一存成 "Imported Config"
+        stale = await session.execute(
+            select(Config).where(Config.name.in_(["Imported Config", ""]))
+        )
+        stale_configs = stale.scalars().all()
+        if stale_configs:
+            from api.config import derive_config_name
+            for cfg in stale_configs:
+                try:
+                    import json as _json
+                    data = _json.loads(cfg.content) if cfg.content else {}
+                    if not isinstance(data, dict):
+                        data = {}
+                except Exception:
+                    data = {}
+                cfg.name = derive_config_name(data, cfg.url or "")
+            await session.commit()
+
 
 async def get_db():
     async with async_session() as session:

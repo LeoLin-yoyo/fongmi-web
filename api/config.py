@@ -1,4 +1,5 @@
 import hashlib
+import ipaddress
 import json
 from typing import Optional
 
@@ -10,7 +11,7 @@ import httpx
 from pydantic import BaseModel
 from typing import List
 
-from api.decoder import decrypt_config
+from api.decoder import load_config_dict
 from model.database import get_db, Config as ConfigModel, Site as SiteModel, Parse as ParseModel
 from model.bean import VodConfig, ConfigImportRequest
 
@@ -34,11 +35,80 @@ class CheckBatchRequest(BaseModel):
 class PriorityRequest(BaseModel):
     priority: int
 
+
+class RenameRequest(BaseModel):
+    name: str
+
 router = APIRouter()
 
 
 def compute_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def derive_config_name(data: dict, url: str) -> str:
+    """配置显示名：优先配置自带 name/wall，其次由 URL 推导，最后回退域名。
+
+    对齐 TV-fongmi Config.getDesc()「无 name 则用 URL」的规则，避免所有导入
+    的配置都显示成同一个占位名。
+    """
+    for key in ("name", "wall"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    if url:
+        from urllib.parse import urlparse, unquote
+
+        parsed = urlparse(url)
+        path = unquote(parsed.path or "")
+        # 取文件名（去掉扩展名）作为候选，如 /box/m.json -> m
+        filename = path.rstrip("/").rsplit("/", 1)[-1]
+        stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+        host = (parsed.hostname or "").replace("www.", "")
+        # 文件名太泛（json/config/tv 等）时用「域名/文件名」组合，仍太泛则只用域名
+        generic = {"", "json", "config", "tv", "vod", "index", "api", "dc", "box"}
+        if stem and stem.lower() not in generic:
+            return f"{host}/{stem}" if host else stem
+        if host:
+            return host
+    return "未命名配置"
+
+
+async def validate_import_url(url: str) -> None:
+    """校验导入 URL：仅允许 http/https，拒绝内网/环回/保留地址（防 SSRF）。"""
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url.strip())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="URL 格式非法")
+
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="仅支持 http/https 链接")
+
+    host = parsed.hostname
+    if not host:
+        raise HTTPException(status_code=400, detail="URL 缺少主机名")
+    if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
+        raise HTTPException(status_code=400, detail="不允许导入本机地址")
+
+    import asyncio
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(host, None)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"域名解析失败: {str(e)[:80]}")
+
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            continue
+        if (
+            ip.is_private or ip.is_loopback or ip.is_reserved
+            or ip.is_link_local or ip.is_multicast or ip.is_unspecified
+        ):
+            raise HTTPException(status_code=400, detail="不允许导入指向内网/保留地址的链接")
 
 
 async def parse_config(data: dict) -> VodConfig:
@@ -86,11 +156,11 @@ async def import_config(
     json_str: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
 ):
-    body = await request.body()
     content_type = request.headers.get("content-type", "")
     if "application/json" in content_type:
+        # 仅 JSON 请求读取原始 body；multipart 表单已被流式解析，再读会 "Stream consumed"
         try:
-            json_body = json.loads(body)
+            json_body = json.loads(await request.body())
             url = url or json_body.get("url")
             json_str = json_str or json_body.get("content") or json_body.get("json_str")
         except Exception:
@@ -98,10 +168,19 @@ async def import_config(
     raw_content = ""
 
     if url:
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True, verify=False) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            raw_content = resp.text
+        await validate_import_url(url)
+        try:
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                raw_content = resp.text
+        except httpx.ConnectError as e:
+            detail = str(e)
+            if "CERTIFICATE" in detail.upper() or "SSL" in detail.upper():
+                raise HTTPException(status_code=400, detail="目标站点 TLS 证书校验失败，无法安全导入")
+            raise HTTPException(status_code=400, detail=f"连接失败: {detail[:80]}")
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=400, detail=f"目标站点返回 HTTP {e.response.status_code}")
     elif file:
         raw_content = (await file.read()).decode("utf-8")
     elif json_str:
@@ -124,9 +203,8 @@ async def import_config(
         raise HTTPException(status_code=400, detail="链接返回的是 HTML 页面，无法解析为配置")
 
     try:
-        decrypted = decrypt_config(raw_content)
-        # 使用 strict=False 允许字符串值中包含原始换行等控制字符
-        data = json.loads(decrypted, strict=False)
+        # 宽松解析：兼容 TVBox 社区配置中的注释、尾逗号、单引号等非标准语法
+        data = load_config_dict(raw_content)
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="JSON 格式错误，请检查配置内容")
     except ValueError as e:
@@ -150,7 +228,7 @@ async def import_config(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Config already exists")
 
-    name = data.get("name", "") or data.get("wall", "") or "Imported Config"
+    name = derive_config_name(data, url or "")
     config_type = "vod"
     if not cfg.sites and cfg.lives:
         config_type = "live"
@@ -173,6 +251,8 @@ async def import_config(
     await db.flush()
 
     for site in cfg.sites:
+        if not site.key:
+            continue
         site_entry = SiteModel(
             config_id=config_entry.id,
             key=site.key,
@@ -217,9 +297,16 @@ async def import_configs(body: BatchImportRequest, db: AsyncSession = Depends(ge
         if not url:
             continue
 
+        # 先做安全校验，再检测可用性
+        try:
+            await validate_import_url(url)
+        except HTTPException as e:
+            results.append({"url": url, "status": "skipped", "detail": f"{e.detail}, skipped"})
+            continue
+
         # 先检测可用性
         try:
-            async with httpx.AsyncClient(timeout=15, follow_redirects=True, verify=False) as client:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
                 resp = await client.get(url)
                 resp.raise_for_status()
                 raw_content = resp.text
@@ -245,8 +332,7 @@ async def import_configs(body: BatchImportRequest, db: AsyncSession = Depends(ge
             continue
 
         try:
-            decrypted = decrypt_config(raw_content)
-            data = json.loads(decrypted)
+            data = load_config_dict(raw_content)
 
             # 多仓格式：提取子链接并递归导入
             if isinstance(data, dict) and "urls" in data and isinstance(data["urls"], list) and not data.get("sites"):
@@ -255,19 +341,19 @@ async def import_configs(body: BatchImportRequest, db: AsyncSession = Depends(ge
                     sub_results = []
                     for sub_url in sub_urls:
                         try:
-                            async with httpx.AsyncClient(timeout=15, follow_redirects=True, verify=False) as client:
+                            await validate_import_url(sub_url)
+                            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
                                 sub_resp = await client.get(sub_url)
                                 sub_resp.raise_for_status()
                                 sub_raw = sub_resp.text
-                            sub_decrypted = decrypt_config(sub_raw)
-                            sub_data = json.loads(sub_decrypted)
+                            sub_data = load_config_dict(sub_raw)
                             sub_cfg = await parse_config(sub_data)
                             sub_hash = compute_hash(sub_raw)
                             sub_existing = await db.execute(select(ConfigModel).where(ConfigModel.hash == sub_hash))
                             if sub_existing.scalar_one_or_none():
                                 sub_results.append({"url": sub_url, "status": "skipped", "detail": "Already exists"})
                                 continue
-                            sub_name = sub_data.get("name", "") or sub_data.get("wall", "") or sub_url
+                            sub_name = derive_config_name(sub_data, sub_url)
                             sub_config_type = "vod"
                             if not sub_cfg.sites and sub_cfg.lives:
                                 sub_config_type = "live"
@@ -281,6 +367,8 @@ async def import_configs(body: BatchImportRequest, db: AsyncSession = Depends(ge
                             db.add(sub_entry)
                             await db.flush()
                             for s in sub_cfg.sites:
+                                if not s.key:
+                                    continue
                                 db.add(SiteModel(config_id=sub_entry.id, key=s.key, name=s.name, type=s.type, api=s.api, ext=s.get_ext_str(), player_type=s.playerType, searchable=s.searchable, quick_search=s.quickSearch, filterable=s.filterable))
                             for p in sub_cfg.parses:
                                 db.add(ParseModel(config_id=sub_entry.id, name=p.name, url=p.url, type=p.type, ext=json.dumps(p.ext, ensure_ascii=False) if isinstance(p.ext, dict) else str(p.ext)))
@@ -299,7 +387,7 @@ async def import_configs(body: BatchImportRequest, db: AsyncSession = Depends(ge
                 results.append({"url": url, "status": "skipped", "detail": "Already exists"})
                 continue
 
-            name = data.get("name", "") or data.get("wall", "") or url
+            name = derive_config_name(data, url)
             config_type = "vod"
             if not cfg.sites and cfg.lives:
                 config_type = "live"
@@ -317,6 +405,8 @@ async def import_configs(body: BatchImportRequest, db: AsyncSession = Depends(ge
             await db.flush()
 
             for site in cfg.sites:
+                if not site.key:
+                    continue
                 db.add(SiteModel(config_id=config_entry.id, key=site.key, name=site.name, type=site.type, api=site.api, ext=site.get_ext_str(), player_type=site.playerType, searchable=site.searchable, quick_search=site.quickSearch, filterable=site.filterable))
 
             for parse in cfg.parses:
@@ -339,7 +429,11 @@ async def check_url(body: CheckUrlRequest):
     if not url:
         raise HTTPException(status_code=400, detail="URL is empty")
     try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True, verify=False) as client:
+        await validate_import_url(url)
+    except HTTPException as e:
+        return {"code": 1, "available": False, "detail": str(e.detail)}
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
             resp = await client.get(url)
             resp.raise_for_status()
             raw_content = resp.text
@@ -349,8 +443,7 @@ async def check_url(body: CheckUrlRequest):
         if is_html:
             return {"code": 1, "available": False, "detail": "URL returns HTML page, not a config"}
         try:
-            decrypted = decrypt_config(raw_content)
-            data = json.loads(decrypted)
+            data = load_config_dict(raw_content)
             has_sites = len(data.get("sites", [])) > 0
             has_lives = len(data.get("lives", [])) > 0
             if not has_sites and not has_lives:
@@ -384,7 +477,8 @@ async def check_batch(body: CheckBatchRequest):
     import asyncio
     async def check_one(url: str):
         try:
-            async with httpx.AsyncClient(timeout=15, follow_redirects=True, verify=False) as client:
+            await validate_import_url(url)
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
                 resp = await client.get(url)
                 resp.raise_for_status()
                 raw_content = resp.text
@@ -393,8 +487,7 @@ async def check_batch(body: CheckBatchRequest):
             is_html = raw_content.strip().startswith("<!DOCTYPE") or raw_content.strip().startswith("<html")
             if is_html:
                 return {"url": url, "available": False, "detail": "HTML page"}
-            decrypted = decrypt_config(raw_content)
-            data = json.loads(decrypted)
+            data = load_config_dict(raw_content)
             # 多仓格式
             if isinstance(data, dict) and "urls" in data and isinstance(data["urls"], list) and not data.get("sites"):
                 sub_urls = [u["url"] for u in data["urls"] if isinstance(u, dict) and u.get("url")]
@@ -470,11 +563,26 @@ async def set_priority(config_id: int, body: PriorityRequest, db: AsyncSession =
 
 @router.put("/reorder")
 async def reorder_configs(body: ReorderRequest, db: AsyncSession = Depends(get_db)):
-    """批量重排优先级（ids 顺序决定优先级，越靠前优先级越高）"""
     for i, config_id in enumerate(body.ids):
         await db.execute(update(ConfigModel).where(ConfigModel.id == config_id).values(priority=len(body.ids) - i))
     await db.commit()
     return {"code": 0}
+
+
+@router.put("/{config_id}/name")
+async def rename_config(config_id: int, body: RenameRequest, db: AsyncSession = Depends(get_db)):
+    """重命名配置（配置列表展示名）"""
+    config = await db.get(ConfigModel, config_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="Config not found")
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="名称不能为空")
+    if len(name) > 128:
+        raise HTTPException(status_code=400, detail="名称过长")
+    config.name = name
+    await db.commit()
+    return {"code": 0, "name": config.name}
 
 
 @router.get("/site/")

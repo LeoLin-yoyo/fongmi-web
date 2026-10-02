@@ -36,11 +36,12 @@
 
               <!-- Custom Controls -->
               <div v-if="showControls" class="player-controls" @click.stop>
-                <div class="controls-progress" @click.stop="onProgressClick">
+                <div ref="progressBoxRef" class="controls-progress" :class="{ dragging: uiSeeking }"
+                  @mousedown.stop.prevent="onProgressDown" @click.stop>
                   <div class="progress-track">
-                    <div class="progress-played" :style="{ width: progressPercent + '%' }"></div>
-                    <div class="progress-buffered" :style="{ width: bufferPercent + '%' }"></div>
-                    <div class="progress-thumb" :style="{ left: progressPercent + '%' }"></div>
+                    <div class="progress-buffered" :style="{ width: displayBufferPercent + '%' }"></div>
+                    <div class="progress-played" :style="{ width: displayProgressPercent + '%' }"></div>
+                    <div class="progress-thumb" :style="{ left: displayProgressPercent + '%' }"></div>
                   </div>
                 </div>
                 <div class="controls-bottom">
@@ -236,9 +237,10 @@ const router = useRouter()
 const {
   videoRef, videoResolution, bufferPercent, isBuffering, downloadSpeed,
   initPlayer, setupVideoEvents, resetVideoInfo, useProxy,
-  currentTime, duration, playbackRate, isPlaying, showControls,
+  currentTime, duration, uiSeeking, playbackRate, isPlaying, showControls,
   isFullscreen, availableResolutions, currentResolution, autoNextCallback,
   embeddedSubtitles, activeSubtitle, subtitleSize,
+  progressBoxRef, displayProgressPercent, displayBufferPercent, onProgressDown,
   PLAYBACK_RATES,
   setPlaybackRate, togglePlay, skip, toggleFullscreen, togglePip,
   setResolution, setupKeyboardShortcuts, removeKeyboardShortcuts,
@@ -281,11 +283,6 @@ const currentResLabel = computed(() => {
   return found ? found.label : '自动'
 })
 
-const progressPercent = computed(() => {
-  if (duration.value <= 0) return 0
-  return (currentTime.value / duration.value) * 100
-})
-
 /** 部分站点简介带 HTML 标签，剥掉后展示纯文本 */
 const plainContent = computed(() => {
   const raw = detail.value?.vod_content || ''
@@ -318,14 +315,6 @@ function onFullscreenChange() {
 
 function onMouseMove() {
   startControlsTimer()
-}
-
-function onProgressClick(e: MouseEvent) {
-  const track = (e.target as HTMLElement).closest('.progress-track')
-  if (!track || !videoRef.value) return
-  const rect = track.getBoundingClientRect()
-  const ratio = (e.clientX - rect.left) / rect.width
-  videoRef.value.currentTime = ratio * duration.value
 }
 
 function formatTime(t: number): string {
@@ -643,10 +632,25 @@ function throttle(fn: (...args: any[]) => void, delay: number) {
 .info-column { grid-area: info; min-width: 0; }
 .play-section { grid-area: episodes; }
 
-.detail-video { width: 100%; display: block; background: #000; border-radius: 8px; max-height: 62vh; }
+/* 固定 16:9 视窗：元数据加载前后高度恒定，超高时按 62vh 限高并居中 */
+.video-wrapper {
+  position: relative;
+  width: 100%;
+  max-width: calc(62vh * 16 / 9);
+  aspect-ratio: 16 / 9;
+  margin: 0 auto;
+  background: #000;
+}
+.detail-video {
+  position: absolute; top: 0; left: 0;
+  width: 100%; height: 100%;
+  object-fit: contain;
+  background: #000;
+  border-radius: 8px;
+}
 
 /* 全屏：视频铺满整屏，比例不符时由 object-fit 留黑边，而不是压在小框里 */
-.video-wrapper:fullscreen { background: #000; border-radius: 0; }
+.video-wrapper:fullscreen { background: #000; border-radius: 0; aspect-ratio: auto; max-width: none; }
 .video-wrapper:fullscreen video {
   width: 100% !important;
   height: 100% !important;
@@ -658,10 +662,9 @@ function throttle(fn: (...args: any[]) => void, delay: number) {
 @media (max-width: 1024px) {
   .detail-layout { grid-template-columns: 1fr; grid-template-areas: "player" "info" "episodes"; }
   .player-sticky { position: static; }
-  .detail-video { max-height: 60vh; }
+  .video-wrapper { max-width: calc(60vh * 16 / 9); }
 }
 .player-container { background: #000; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.4); position: relative; }
-.video-wrapper { position: relative; }
 
 .player-top-bar {
   position: absolute; top: 0; left: 0; right: 0; padding: 8px 12px;
@@ -695,12 +698,16 @@ function throttle(fn: (...args: any[]) => void, delay: number) {
   background: linear-gradient(to top, rgba(0,0,0,0.85), transparent);
   padding: 8px 12px 4px; z-index: 20; transition: opacity 0.3s;
 }
-.controls-progress { margin-bottom: 6px; cursor: pointer; }
-.progress-track { position: relative; height: 4px; background: rgba(255,255,255,0.15); border-radius: 2px; }
-.progress-played { position: absolute; left: 0; top: 0; height: 100%; background: var(--n-primary-color); border-radius: 2px; z-index: 3; }
-.progress-buffered { position: absolute; left: 0; top: 0; height: 100%; background: rgba(255,255,255,0.2); border-radius: 2px; z-index: 2; }
-.progress-thumb { position: absolute; top: 50%; width: 12px; height: 12px; border-radius: 50%; background: #fff; transform: translate(-50%, -50%); z-index: 4; display: none; }
-.progress-track:hover .progress-thumb { display: block; }
+.controls-progress { margin-bottom: 4px; cursor: pointer; padding: 8px 0; }
+.progress-track { position: relative; height: 4px; background: rgba(255,255,255,0.15); border-radius: 2px; transition: height 0.15s; }
+.controls-progress:hover .progress-track, .controls-progress.dragging .progress-track { height: 6px; }
+/* 已播放=主题蓝实心，已缓冲=半透明白，轨道=更暗的底色，三层颜色明显区分 */
+.progress-played { position: absolute; left: 0; top: 0; height: 100%; background: var(--n-primary-color); border-radius: 2px; z-index: 3; transition: width 0.1s linear; }
+.progress-buffered { position: absolute; left: 0; top: 0; height: 100%; background: rgba(255,255,255,0.4); border-radius: 2px; z-index: 2; transition: width 0.3s linear; }
+.controls-progress.dragging .progress-played, .controls-progress.dragging .progress-buffered { transition: none; }
+.progress-thumb { position: absolute; top: 50%; width: 12px; height: 12px; border-radius: 50%; background: #fff; transform: translate(-50%, -50%); z-index: 4; box-shadow: 0 0 4px rgba(0,0,0,0.5); display: none; }
+.controls-progress:hover .progress-thumb, .controls-progress.dragging .progress-thumb { display: block; }
+.controls-progress.dragging { cursor: grabbing; }
 
 .controls-bottom { display: flex; align-items: center; gap: 8px; }
 .controls-left { display: flex; align-items: center; gap: 8px; }

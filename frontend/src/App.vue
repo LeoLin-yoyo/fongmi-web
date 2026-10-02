@@ -82,7 +82,7 @@ document.documentElement.setAttribute('data-theme', isDark.value ? 'dark' : 'lig
 </script>
 
 <style>
-:root { --bg-color: #0f0f13; --text-color: #e0e0e0; --card-bg: #1a1a2e; --border-color: rgba(255,255,255,0.06); }
+:root { --bg-color: #0f0f13; --text-color: #e0e0e0; --card-bg: #1a1a2e; --border-color: rgba(255,255,255,0.06); --n-primary-color: #00aaee; }
 [data-theme="light"] { --bg-color: #f5f5f5; --text-color: #333; --card-bg: #fff; --border-color: rgba(0,0,0,0.08); }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }

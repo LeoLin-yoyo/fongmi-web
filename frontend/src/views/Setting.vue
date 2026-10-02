@@ -68,9 +68,11 @@
             <n-tag v-if="cfg.enabled" size="small" type="success">已启用</n-tag>
             <n-tag v-else size="small">已禁用</n-tag>
             <span class="config-meta">{{ cfg.type === 'live' ? '直播' : '点播' }}</span>
+            <span v-if="cfg.url" class="config-url" :title="cfg.url">{{ cfg.url }}</span>
           </div>
           <div class="config-actions">
             <n-switch :value="!!cfg.enabled" @update:value="() => toggle(cfg.id)" />
+            <n-button size="small" ghost @click="startRename(cfg)">重命名</n-button>
             <n-button size="small" type="error" ghost @click="remove(cfg.id)">删除</n-button>
           </div>
         </div>
@@ -149,7 +151,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useMessage, NCard, NTabs, NTabPane, NInput, NButton, NUpload, NUploadDragger, NText, NTag, NSpace, NSwitch } from 'naive-ui'
-import { importConfig, importBatch, getConfigs, deleteConfig, toggleConfig, checkBatch, importLiveBatch, getLiveSources, deleteLiveSource, toggleLiveSource } from '@/api/config'
+import { importConfig, importBatch, getConfigs, deleteConfig, toggleConfig, checkBatch, importLiveBatch, getLiveSources, deleteLiveSource, toggleLiveSource, renameConfig } from '@/api/config'
 import { localAPI } from '@/api/local'
 
 const message = useMessage()
@@ -381,6 +383,20 @@ async function remove(id: number) {
   await loadConfigs()
 }
 
+function startRename(cfg: any) {
+  const input = window.prompt('重命名配置', cfg.name || '')
+  if (input === null) return
+  const name = input.trim()
+  if (!name) {
+    message.warning('名称不能为空')
+    return
+  }
+  if (name === cfg.name) return
+  renameConfig(cfg.id, name)
+    .then(() => loadConfigs())
+    .catch(() => message.error('重命名失败'))
+}
+
 async function toggleLive(id: number) {
   await toggleLiveSource(id)
   await loadLiveSources()
@@ -407,10 +423,11 @@ async function removeLive(id: number) {
 .check-count { color: #888; flex-shrink: 0; }
 .config-item { display: flex; align-items: center; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--n-divider-color); }
 .config-item:last-child { border-bottom: none; }
-.config-info { flex: 1; display: flex; align-items: center; gap: 8px; }
-.config-name { font-size: 14px; font-weight: 500; }
-.config-meta { font-size: 11px; color: #888; background: var(--n-divider-color); padding: 1px 6px; border-radius: 3px; }
-.config-actions { display: flex; align-items: center; gap: 8px; }
+.config-info { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.config-name { font-size: 14px; font-weight: 500; flex-shrink: 0; }
+.config-meta { font-size: 11px; color: #888; background: var(--n-divider-color); padding: 1px 6px; border-radius: 3px; flex-shrink: 0; }
+.config-url { font-size: 11px; color: #666; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
+.config-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .hint { font-size: 12px; color: #888; margin: 0; }
 .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
 .stat-card { background: var(--n-base-color); border: 1px solid var(--n-border-color); border-radius: 10px; padding: 14px; }

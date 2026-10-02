@@ -1,11 +1,14 @@
 """Live TV API - M3U/TXT/JSON parsing with multi-line channel merging"""
+import asyncio
 import json
 import re
+import time
+
 import httpx
 from fastapi import APIRouter, Query
 from loguru import logger
 
-from api.decoder import decrypt_config
+from api.decoder import load_config_dict
 from model.database import async_session, Config as ConfigModel
 from sqlalchemy import select
 
@@ -18,10 +21,20 @@ _CACHED_CONFIGS = None
 _CACHED_CONFIGS_TIME = 0.0
 _CONFIG_CACHE_TTL = 60  # 秒
 
+# 频道列表缓存：key -> (时间, 解析结果)。直播源文件通常数 MB，远程拉取+解析耗时长，
+# 缓存后二次进入直播页即时呈现（源列表切换/页面刷新不再重复下载）
+_CHANNELS_CACHE: dict = {}
+_CHANNELS_LOCKS: dict = {}
+_CHANNELS_TTL = 1800  # 30 分钟
+
+# EPG 节目单缓存：EPG XML 体积大且解析慢，同源短缓存
+_EPG_CACHE: dict = {}
+_EPG_LOCKS: dict = {}
+_EPG_TTL = 600  # 10 分钟
+
 
 async def _get_enabled_configs():
     global _CACHED_CONFIGS, _CACHED_CONFIGS_TIME
-    import time
     now = time.time()
     if _CACHED_CONFIGS is not None and (now - _CACHED_CONFIGS_TIME) < _CONFIG_CACHE_TTL:
         return _CACHED_CONFIGS
@@ -35,7 +48,7 @@ async def _get_enabled_configs():
 
 
 async def _fetch_url(url: str) -> str:
-    client_kwargs = dict(timeout=15.0, verify=False, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0"})
+    client_kwargs = dict(timeout=15.0, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0"})
     if _PROXY_URL:
         client_kwargs["proxy"] = _PROXY_URL
     async with httpx.AsyncClient(**client_kwargs) as client:
@@ -43,13 +56,37 @@ async def _fetch_url(url: str) -> str:
         return resp.text
 
 
+async def _cached_fetch(key: str, cache: dict, locks: dict, ttl: float, force: bool, producer):
+    """通用 TTL 缓存：producer 为零参协程，返回要缓存的值。拉取失败时回退到过期缓存。"""
+    now = time.time()
+    hit = cache.get(key)
+    if hit and not force and (now - hit[0]) < ttl:
+        return hit[1]
+
+    lock = locks.setdefault(key, asyncio.Lock())
+    async with lock:
+        now = time.time()
+        hit = cache.get(key)
+        if hit and not force and (now - hit[0]) < ttl:
+            return hit[1]
+        try:
+            value = await producer()
+            cache[key] = (now, value)
+            return value
+        except Exception as e:
+            logger.error(f"cached_fetch {key} error: {e}")
+            if hit:
+                return hit[1]  # 回退到过期缓存，避免源抖动时页面直接空掉
+            raise
+
+
 @router.get("/epg")
-async def live_epg(source_idx: int = Query(default=0)):
+async def live_epg(source_idx: int = Query(default=0), refresh: bool = Query(default=False)):
     configs = await _get_enabled_configs()
     all_lives = []
     for cfg in configs:
         try:
-            data = json.loads(decrypt_config(cfg.content))
+            data = load_config_dict(cfg.content)
             lives = data.get("lives", [])
             for lv in lives:
                 all_lives.append({"name": lv.get("name", ""), "url": lv.get("url", ""), "epg": lv.get("epg", ""), "_config_id": cfg.id})
@@ -64,11 +101,11 @@ async def live_epg(source_idx: int = Query(default=0)):
     if not epg_url:
         return {"epg": []}
 
-    try:
+    async def _produce():
         text = await _fetch_url(epg_url)
         # defusedxml 拒绝 DTD/实体定义，防 XML 实体扩展（billion laughs）
         from defusedxml import ElementTree as SafeET
-        root = SafeET.fromstring(text)
+        root = await asyncio.to_thread(SafeET.fromstring, text)
         programs = []
         for prog in root.findall(".//programme"):
             ch_id = prog.get("channel", "")
@@ -79,6 +116,10 @@ async def live_epg(source_idx: int = Query(default=0)):
             title = title_el.text if title_el is not None else ""
             desc = desc_el.text if desc_el is not None else ""
             programs.append({"channel": ch_id, "start": start, "stop": stop, "title": title, "desc": desc})
+        return programs
+
+    try:
+        programs = await _cached_fetch(f"epg:{epg_url}", _EPG_CACHE, _EPG_LOCKS, _EPG_TTL, refresh, _produce)
         return {"epg": programs}
     except Exception as e:
         logger.error(f"live_epg fetch error: {e}")
@@ -92,7 +133,7 @@ async def live_groups():
     all_lives = []
     for cfg in configs:
         try:
-            data = json.loads(decrypt_config(cfg.content))
+            data = load_config_dict(cfg.content)
             lives = data.get("lives", [])
             for lv in lives:
                 all_lives.append({
@@ -131,13 +172,13 @@ async def live_groups():
 
 
 @router.get("/channels")
-async def live_channels(source_idx: int = Query(default=0)):
+async def live_channels(source_idx: int = Query(default=0), refresh: bool = Query(default=False)):
     configs = await _get_enabled_configs()
 
     all_lives = []
     for cfg in configs:
         try:
-            data = json.loads(decrypt_config(cfg.content))
+            data = load_config_dict(cfg.content)
             lives = data.get("lives", [])
             for lv in lives:
                 all_lives.append({"name": lv.get("name", ""), "url": lv.get("url", ""), "type": lv.get("type", 0), "_config_id": cfg.id, "_source_type": "config"})
@@ -163,28 +204,30 @@ async def live_channels(source_idx: int = Query(default=0)):
     if not url:
         return []
 
-    if lv.get("_source_type") == "direct":
+    source_type = lv.get("_source_type")
+    if source_type == "direct":
         from api.live_source import _parse_m3u_groups, _parse_json_groups, _parse_txt_groups
-        try:
+
+        async def _produce():
             text = await _fetch_url(url)
             if "#EXTM3U" in text or "#EXTINF" in text:
-                return _parse_m3u_groups(text)
+                return await asyncio.to_thread(_parse_m3u_groups, text)
             elif text.strip().startswith("["):
-                return _parse_json_groups(text)
+                return await asyncio.to_thread(_parse_json_groups, text)
             else:
-                return _parse_txt_groups(text)
-        except Exception as e:
-            logger.error(f"live_channels direct fetch error: {e}")
-            return []
+                return await asyncio.to_thread(_parse_txt_groups, text)
+    else:
+        async def _produce():
+            text = await _fetch_url(url)
+            if text.strip().startswith("["):
+                return await asyncio.to_thread(_parse_json, text)
+            elif "#EXTM3U" in text or "#EXTINF" in text:
+                return await asyncio.to_thread(_parse_m3u, text)
+            else:
+                return await asyncio.to_thread(_parse_txt, text)
 
     try:
-        text = await _fetch_url(url)
-        if text.strip().startswith("["):
-            return _parse_json(text)
-        elif "#EXTM3U" in text or "#EXTINF" in text:
-            return _parse_m3u(text)
-        else:
-            return _parse_txt(text)
+        return await _cached_fetch(f"channels:{url}", _CHANNELS_CACHE, _CHANNELS_LOCKS, _CHANNELS_TTL, refresh, _produce)
     except Exception as e:
         logger.error(f"live_channels fetch error: {e}")
         return []

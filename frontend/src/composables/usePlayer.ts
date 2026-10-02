@@ -1,4 +1,4 @@
-import { ref, onBeforeUnmount } from 'vue'
+import { ref, computed, onBeforeUnmount } from 'vue'
 import Hls from 'hls.js'
 import flvjs from 'flv.js'
 import { track } from '@/utils/metrics'
@@ -13,6 +13,8 @@ export function usePlayer() {
   const useProxy = ref(true)
   const currentTime = ref(0)
   const duration = ref(0)
+  // 进度条拖拽中：timeupdate 不回写 currentTime，避免锚点被播放进度拉回
+  const uiSeeking = ref(false)
   const playbackRate = ref(1)
   const isFullscreen = ref(false)
   const showControls = ref(true)
@@ -216,7 +218,7 @@ export function usePlayer() {
       track('error', { message: `video error: ${el.error?.code || ''}` })
     }
     el.ontimeupdate = () => {
-      currentTime.value = el.currentTime || 0
+      if (!uiSeeking.value) currentTime.value = el.currentTime || 0
       duration.value = el.duration || 0
     }
     el.onended = () => {
@@ -291,6 +293,54 @@ export function usePlayer() {
   function skip(seconds: number) {
     const el = videoRef.value
     if (el) el.currentTime = Math.max(0, Math.min(el.duration, el.currentTime + seconds))
+  }
+
+  // ---------- 进度条拖拽（PlayPage / DetailPage 共用） ----------
+  const progressBoxRef = ref<HTMLElement | null>(null)
+  const seekRatio = ref(0)
+
+  const progressPercent = computed(() => {
+    if (duration.value <= 0) return 0
+    return (currentTime.value / duration.value) * 100
+  })
+  // 拖拽时以锚点位置为准，松手后回到播放进度
+  const displayProgressPercent = computed(() => {
+    const p = uiSeeking.value ? seekRatio.value * 100 : progressPercent.value
+    return Math.min(100, Math.max(0, p))
+  })
+  const displayBufferPercent = computed(() => Math.min(100, Math.max(0, bufferPercent.value)))
+
+  function seekRatioFromEvent(e: MouseEvent): number {
+    const box = progressBoxRef.value
+    if (!box) return 0
+    const rect = box.getBoundingClientRect()
+    if (rect.width <= 0) return 0
+    return Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width))
+  }
+
+  function onProgressDown(e: MouseEvent) {
+    if (!videoRef.value || duration.value <= 0) return
+    uiSeeking.value = true
+    seekRatio.value = seekRatioFromEvent(e)
+    currentTime.value = seekRatio.value * duration.value // 锚点立即跟随点击位置
+    window.addEventListener('mousemove', onProgressMove)
+    window.addEventListener('mouseup', onProgressUp)
+  }
+
+  function onProgressMove(e: MouseEvent) {
+    if (!uiSeeking.value) return
+    seekRatio.value = seekRatioFromEvent(e)
+    currentTime.value = seekRatio.value * duration.value
+  }
+
+  function onProgressUp() {
+    window.removeEventListener('mousemove', onProgressMove)
+    window.removeEventListener('mouseup', onProgressUp)
+    if (!uiSeeking.value) return
+    uiSeeking.value = false
+    if (videoRef.value && duration.value > 0) {
+      videoRef.value.currentTime = seekRatio.value * duration.value
+    }
   }
 
   function toggleFullscreen() {
@@ -487,6 +537,8 @@ export function usePlayer() {
     destroyPlayer()
     removeKeyboardShortcuts()
     stopControlsTimer()
+    window.removeEventListener('mousemove', onProgressMove)
+    window.removeEventListener('mouseup', onProgressUp)
   })
 
   // 页面直接关闭时兜底上报当前会话
@@ -496,9 +548,11 @@ export function usePlayer() {
 
   return {
     videoRef, videoResolution, bufferPercent, isBuffering, downloadSpeed, isPlaying, useProxy,
-    currentTime, duration, playbackRate, isFullscreen, showControls,
+    currentTime, duration, uiSeeking, playbackRate, isFullscreen, showControls,
     subtitleTrack, availableResolutions, currentResolution, autoNextCallback,
     embeddedSubtitles, activeSubtitle, subtitleSize,
+    progressBoxRef, progressPercent, displayProgressPercent, displayBufferPercent,
+    onProgressDown,
     PLAYBACK_RATES,
     initPlayer, destroyPlayer, setupVideoEvents, resetVideoInfo,
     setPlaybackRate, togglePlay, seek, skip, toggleFullscreen, togglePip,

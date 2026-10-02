@@ -32,6 +32,10 @@ export function reorderConfigs(ids: number[]) {
   return request.put('/config/reorder', { ids })
 }
 
+export function renameConfig(id: number, name: string) {
+  return request.put(`/config/${id}/name`, { name })
+}
+
 export function getSites() {
   return request.get('/config/site/') as unknown as Promise<{ code: number; data: any[] }>
 }

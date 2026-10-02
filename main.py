@@ -6,6 +6,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 import json as json_mod
+from loguru import logger
 
 from model.database import init_db
 from api import api_router
@@ -46,6 +47,7 @@ async def json_decode_handler(request: Request, exc: json_mod.JSONDecodeError):
 async def global_exception_handler(request: Request, exc: Exception):
     if isinstance(exc, (SystemExit, KeyboardInterrupt, GeneratorExit)):
         raise exc
+    logger.opt(exception=exc).error(f"Unhandled error on {request.method} {request.url.path}")
     return JSONResponse(
         status_code=500,
         content={"code": 1, "detail": "服务器内部错误"},

@@ -5,15 +5,15 @@ import json
 
 
 class Site(BaseModel):
-    key: str
-    name: str
+    key: str = ""
+    name: str = ""
     type: int = 0
     api: str = ""
     playUrl: str = ""
     searchable: int = 1
     quickSearch: int = 1
     filterable: int = 1
-    ext: Union[str, dict] = ""
+    ext: Union[str, dict, list] = ""
     jar: str = ""
     playerType: int = 0
     categories: list = []
@@ -23,7 +23,7 @@ class Site(BaseModel):
     clickSelector: str = ""
 
     def get_ext_str(self) -> str:
-        if isinstance(self.ext, dict):
+        if isinstance(self.ext, (dict, list)):
             return json.dumps(self.ext, ensure_ascii=False)
         return self.ext
 
