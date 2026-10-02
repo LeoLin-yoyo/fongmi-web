@@ -1,5 +1,6 @@
 <template>
   <div class="local-page">
+    <BackTop />
     <div v-if="!embedded" class="page-header">
       <h2>
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-4px;margin-right:6px">
@@ -107,14 +108,14 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { useMessage, NButton, NInput, NSelect, NSkeleton, NProgress, NEmpty, NSpin } from 'naive-ui'
 import { localAPI } from '@/api/local'
+import { openInNewTab } from '@/utils/navigation'
 import { formatDuration, formatSize } from '@/utils/format'
+import BackTop from '@/components/BackTop.vue'
 
 const props = defineProps<{ embedded?: boolean }>()
 
-const router = useRouter()
 const message = useMessage()
 
 const PAGE = 60
@@ -186,7 +187,7 @@ function onCardClick(v: any) {
     if (selected.has(v.id)) selected.delete(v.id)
     else selected.add(v.id)
   } else {
-    router.push(`/local/player/${v.id}`)
+    openInNewTab({ path: `/local/player/${v.id}` })
   }
 }
 

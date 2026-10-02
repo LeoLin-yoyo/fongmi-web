@@ -1,5 +1,6 @@
 <template>
   <div class="home-page">
+    <BackTop />
     <div v-if="initLoading" class="init-loading">
       <n-spin size="large" />
       <p style="margin-top:12px;color:#888">加载中...</p>
@@ -228,6 +229,7 @@ import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { NButton, NSelect, NSpin, NSkeleton, NModal } from 'naive-ui'
 import { imgUrl } from '@/api/img'
 import { openInNewTab } from '@/utils/navigation'
+import BackTop from '@/components/BackTop.vue'
 
 const initLoading = ref(true)
 const loading = ref(false)
