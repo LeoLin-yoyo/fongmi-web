@@ -107,4 +107,15 @@ a { text-decoration: none; color: inherit; }
 }
 
 :focus-visible { outline: 2px solid var(--n-primary-color, #4098ff); outline-offset: 2px; }
+
+/* 全局滚动条：细条 + 半透明圆角滑块，暗/亮主题各自适配 */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.32); }
+::-webkit-scrollbar-corner { background: transparent; }
+html { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.18) transparent; }
+[data-theme="light"] ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.22); }
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.38); }
+html[data-theme="light"] { scrollbar-color: rgba(0,0,0,0.22) transparent; }
 </style>

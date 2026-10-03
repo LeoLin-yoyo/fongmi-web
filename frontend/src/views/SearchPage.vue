@@ -316,11 +316,7 @@ function goDetail(v: any) {
 .result-count { font-size: 13px; color: #888; margin-left: auto; }
 
 .search-layout { display: flex; gap: 16px; min-height: 60vh; }
-.site-tabs { width: 140px; flex-shrink: 0; display: flex; flex-direction: column; gap: 4px; position: sticky; top: 76px; align-self: flex-start; max-height: calc(100vh - 100px); overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.18) transparent; }
-.site-tabs::-webkit-scrollbar { width: 6px; }
-.site-tabs::-webkit-scrollbar-track { background: transparent; }
-.site-tabs::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 3px; }
-.site-tabs::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
+.site-tabs { width: 140px; flex-shrink: 0; display: flex; flex-direction: column; gap: 4px; position: sticky; top: 76px; align-self: flex-start; max-height: calc(100vh - 100px); overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .tab-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-radius: 8px; cursor: pointer; transition: all 0.2s; font-size: 13px; color: #888; background: transparent; }
 .tab-item:hover { background: rgba(255,255,255,0.05); color: #ccc; }
 .tab-item.active { background: rgba(64,128,255,0.15); color: #4098ff; font-weight: 600; }

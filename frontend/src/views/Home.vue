@@ -182,7 +182,7 @@
       <div class="home-section">
         <div class="section-header">
           <h3>{{ currentCategoryName || '全部' }}{{ mergedCategory ? ' · 含子分类' : '' }}</h3>
-          <div v-if="classes.length" class="class-tabs-mini">
+          <div v-if="classes.length" class="class-tabs-mini" @wheel="onRailWheel">
             <button
               v-for="cls in classes" :key="cls.type_id"
               :class="['class-tab', { active: currentTid === cls.type_id }]"
@@ -682,8 +682,7 @@ onBeforeUnmount(() => {
 .interest-btn.active { background: var(--n-primary-color); border-color: var(--n-primary-color); color: #fff; }
 
 .site-select-mini { margin-left: auto; }
-.class-tabs-mini { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
-.class-tabs-mini::-webkit-scrollbar { display: none; }
+.class-tabs-mini { flex: 1; min-width: 0; display: flex; gap: 6px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .class-tab { flex-shrink: 0; padding: 4px 14px; border: 1px solid rgba(255,255,255,0.12); border-radius: 16px; background: transparent; cursor: pointer; font-size: 12px; color: #aaa; transition: all 0.2s; white-space: nowrap; }
 .class-tab:hover { border-color: var(--n-primary-color); color: #fff; }
 .class-tab.active { background: var(--n-primary-color); border-color: var(--n-primary-color); color: #fff; }
