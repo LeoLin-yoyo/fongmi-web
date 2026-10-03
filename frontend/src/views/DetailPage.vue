@@ -225,7 +225,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NTag, NTabs, NTabPane, NEllipsis, NEmpty, NSkeleton, NModal, NInput, NButton } from 'naive-ui'
 import { imgUrl } from '@/api/img'
@@ -238,7 +238,7 @@ const {
   videoRef, videoResolution, bufferPercent, isBuffering, downloadSpeed,
   initPlayer, setupVideoEvents, resetVideoInfo, useProxy,
   currentTime, duration, uiSeeking, playbackRate, isPlaying, showControls,
-  isFullscreen, availableResolutions, currentResolution, autoNextCallback,
+  isFullscreen, availableResolutions, currentResolution, autoNextCallback, playErrorCallback,
   embeddedSubtitles, activeSubtitle, subtitleSize,
   progressBoxRef, displayProgressPercent, displayBufferPercent, onProgressDown,
   PLAYBACK_RATES,
@@ -298,15 +298,27 @@ const plainContent = computed(() => {
 onMounted(async () => {
   siteKey.value = route.params.site as string
   const ids = route.params.ids as string
+  // 非 fallback 链进入时清空换源失败记录（正常浏览各自独立）
+  if (!route.query.fallback) sessionStorage.removeItem(FALLBACK_KEY)
   await loadDetail(ids)
   setupKeyboardShortcuts()
   document.addEventListener('fullscreenchange', onFullscreenChange)
+})
+
+// 路由参数变化（自动换源/换源弹窗在同路由记录间跳转）时组件被复用，必须手动重载
+watch(() => [route.params.site, route.params.ids], async ([, ids]) => {
+  if (!ids || !route.path.startsWith('/detail/')) return
+  resetVideoInfo()
+  cancelAutoNext()
+  siteKey.value = route.params.site as string
+  await loadDetail(ids as string)
 })
 
 onBeforeUnmount(() => {
   removeKeyboardShortcuts()
   document.removeEventListener('fullscreenchange', onFullscreenChange)
   cancelAutoNext()
+  disarmFallbackWatchdog()
 })
 
 function onFullscreenChange() {
@@ -472,6 +484,87 @@ async function resolvePlayUrl(url: string): Promise<{ url: string; headers?: Rec
   return { url }
 }
 
+// ---------- 播放失败自动降级：同片切线路 → 跨站自动换源 ----------
+const FALLBACK_KEY = 'fongmi_play_fallback'
+const MAX_FALLBACK = 3
+const FALLBACK_WATCHDOG_MS = 20000
+let playErrorLatch = false
+let fallbackWatchdog: ReturnType<typeof setTimeout> | null = null
+
+function loadFallbackState(): { failed: string[]; count: number } {
+  try {
+    const s = JSON.parse(sessionStorage.getItem(FALLBACK_KEY) || '')
+    return { failed: Array.isArray(s?.failed) ? s.failed : [], count: s?.count || 0 }
+  } catch { return { failed: [], count: 0 } }
+}
+
+/** 长时间无画面也视为失败（地址悬挂不触发 error 事件的场景） */
+function armFallbackWatchdog() {
+  if (fallbackWatchdog) clearTimeout(fallbackWatchdog)
+  fallbackWatchdog = setTimeout(() => {
+    const el = videoRef.value
+    if (el && !isPlaying.value && (el.currentTime || 0) < 1) onPlayError()
+  }, FALLBACK_WATCHDOG_MS)
+}
+
+function disarmFallbackWatchdog() {
+  if (fallbackWatchdog) { clearTimeout(fallbackWatchdog); fallbackWatchdog = null }
+}
+
+async function onPlayError() {
+  if (playErrorLatch || !detail.value) return
+  playErrorLatch = true
+  disarmFallbackWatchdog()
+  // 1) 同片换线路：按集名在其它线路找回同一集，其次退同序号
+  const epName = currentEpName.value
+  const curIdx = currentEpIdx.value
+  for (const f of flags.value) {
+    if (f.flag === activeFlag.value) continue
+    let idx = f.episodes.findIndex(e => e.name === epName)
+    if (idx < 0 && curIdx >= 0 && curIdx < f.episodes.length) idx = curIdx
+    if (idx >= 0) {
+      window.$message?.info(`当前线路播放失败，已切换到线路「${f.name}」`)
+      playEpisode(f.flag, f.episodes[idx], idx)
+      return
+    }
+  }
+  // 2) 跨站自动换源：片名精确匹配其它站点（原版 VodFallbackPolicy 的 mismatch 策略），
+  //    失败过的源记入 sessionStorage 防回环，整链最多 MAX_FALLBACK 次
+  const state = loadFallbackState()
+  if (state.count >= MAX_FALLBACK) {
+    window.$message?.error('多次换源仍播放失败，请手动换源')
+    return
+  }
+  try {
+    const { vodAPI } = await import('@/api/vod')
+    const res: any = await vodAPI.search(detail.value.vod_name || '')
+    const list = Array.isArray(res) ? res : (res?.merged || [])
+    const next = list.find((v: any) =>
+      (v.vod_name || '').trim() === (detail.value.vod_name || '').trim() &&
+      v._site_key && v._site_key !== siteKey.value &&
+      !state.failed.includes(`${v._site_key}:${v.vod_id}`))
+    if (!next) {
+      window.$message?.error('播放失败，且没有其它可自动切换的源')
+      return
+    }
+    state.failed.push(`${siteKey.value}:${detail.value.vod_id}`)
+    state.count += 1
+    sessionStorage.setItem(FALLBACK_KEY, JSON.stringify(state))
+    window.$message?.info(`已自动切换到源「${next._site_name || next._site_key}」`)
+    router.replace(`/detail/${next._site_key}/${next.vod_id}?autoplay=1&fallback=1`)
+  } catch {
+    window.$message?.error('播放失败，自动换源出错')
+  }
+}
+
+// 播放成功即终结换源链
+watch(isPlaying, (playing) => {
+  if (playing) {
+    disarmFallbackWatchdog()
+    sessionStorage.removeItem(FALLBACK_KEY)
+  }
+})
+
 async function playEpisode(flag: string, ep: { name: string; url: string }, idx?: number) {
   activeFlag.value = flag
   currentUrl.value = ep.url
@@ -483,6 +576,7 @@ async function playEpisode(flag: string, ep: { name: string; url: string }, idx?
   showDanmakuMenu.value = false
   showSubtitleMenu.value = false
   resetVideoInfo()
+  playErrorLatch = false
   if (danmakuEnabled.value) {
     destroyDanmaku()
     seekDanmaku(0)
@@ -494,6 +588,8 @@ async function playEpisode(flag: string, ep: { name: string; url: string }, idx?
     initPlayer(final.url, final.headers)
     checkHistoryPosition()
     autoNextCallback.value = onAutoNextTriggered
+    playErrorCallback.value = onPlayError
+    armFallbackWatchdog()
     if (danmakuVisible.value && videoRef.value) {
       initDanmaku(videoRef.value as HTMLElement)
       startDanmaku()

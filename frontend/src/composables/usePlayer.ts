@@ -22,6 +22,8 @@ export function usePlayer() {
   const availableResolutions = ref<{ label: string; value: number }[]>([])
   const currentResolution = ref(-1)
   const autoNextCallback = ref<(() => void) | null>(null)
+  // 播放失败回调（video error 事件触发，由页面注入自动换线路/换源逻辑）
+  const playErrorCallback = ref<(() => void) | null>(null)
   // 字幕状态（T2-2）
   const embeddedSubtitles = ref<{ label: string; index: number }[]>([])
   const activeSubtitle = ref(-1)
@@ -216,6 +218,9 @@ export function usePlayer() {
       isBuffering.value = false
       stopSpeedMonitor()
       track('error', { message: `video error: ${el.error?.code || ''}` })
+      if (playErrorCallback.value) {
+        setTimeout(() => playErrorCallback.value!(), 100)
+      }
     }
     el.ontimeupdate = () => {
       if (!uiSeeking.value) currentTime.value = el.currentTime || 0
@@ -549,7 +554,7 @@ export function usePlayer() {
   return {
     videoRef, videoResolution, bufferPercent, isBuffering, downloadSpeed, isPlaying, useProxy,
     currentTime, duration, uiSeeking, playbackRate, isFullscreen, showControls,
-    subtitleTrack, availableResolutions, currentResolution, autoNextCallback,
+    subtitleTrack, availableResolutions, currentResolution, autoNextCallback, playErrorCallback,
     embeddedSubtitles, activeSubtitle, subtitleSize,
     progressBoxRef, progressPercent, displayProgressPercent, displayBufferPercent,
     onProgressDown,
