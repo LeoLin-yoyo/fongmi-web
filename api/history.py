@@ -56,9 +56,14 @@ async def add_history(body: HistoryCreate):
         existing = result.scalar_one_or_none()
         now = datetime.now()
         if existing:
-            existing.name = body.name
-            existing.pic = body.pic
-            existing.episode = body.episode
+            # 播放进度定期上报（DetailPage.savePosition）只带 site_key/vod_id/position/duration，
+            # name/pic/episode 为默认空串；非空才覆盖，避免进度保存把已存的元数据抹掉
+            if body.name:
+                existing.name = body.name
+            if body.pic:
+                existing.pic = body.pic
+            if body.episode:
+                existing.episode = body.episode
             if body.position:
                 existing.position = body.position
             if body.duration:

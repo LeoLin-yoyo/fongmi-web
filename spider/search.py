@@ -7,18 +7,11 @@
 """
 import json
 import asyncio
-import ssl
-import urllib.request
 from loguru import logger
 from sqlalchemy import select
 
-from spider.net import ensure_http_url
+from spider.http_sync import http_get_sync
 from spider.pinyin_index import title_index, _is_ascii_keyword
-
-
-_SSL_CTX = ssl.create_default_context()
-_SSL_CTX.check_hostname = False
-_SSL_CTX.verify_mode = ssl.CERT_NONE
 
 _SITE_TIMEOUT = 10
 _PINYIN_SITE_TIMEOUT = 8
@@ -85,13 +78,20 @@ async def search_aggregated(keyword: str) -> dict:
         )
         site_rows = result.scalars().all()
 
-    site_info = {s.key: {"name": s.name, "api": s.api, "type": s.type, "ext": s.ext} for s in site_rows}
+    site_info = {s.key: {"name": s.name, "api": (s.api or "").strip(), "type": s.type, "ext": s.ext} for s in site_rows}
     coros = [_search_one_row(s.key, s.name, s.api, s.type, s.ext, keyword) for s in site_rows]
-    try:
-        results = await asyncio.wait_for(asyncio.gather(*coros, return_exceptions=True), timeout=_search_timeout())
-    except asyncio.TimeoutError:
-        logger.warning("Search timed out")
-        results = []
+    # 部分收集：总预算到点后保留已完成的结果，取消未完成的（原来 wait_for 一超时就全丢）
+    tasks = [asyncio.ensure_future(c) for c in coros]
+    done, pending = await asyncio.wait(tasks, timeout=_search_timeout())
+    for t in pending:
+        t.cancel()
+    results = [None] * len(tasks)
+    for t in done:
+        idx = tasks.index(t)
+        if t.cancelled():
+            continue
+        exc = t.exception()
+        results[idx] = exc if exc else t.result()
 
     merged = []
     per_site = {}
@@ -175,6 +175,7 @@ async def _expand_with_pinyin(keyword: str, merged: list, per_site: dict, site_i
 async def _search_one_row(site_key, site_name, api_url, site_type, site_ext, keyword,
                           timeout: int = _SITE_TIMEOUT):
     """Search a single site by type"""
+    api_url = (api_url or "").strip()
     if not api_url:
         return []
 
@@ -207,34 +208,32 @@ def _sync_search(site_key, site_name, api_url, keyword):
     sep = "&" if "?" in base else "?"
     url = f"{base}{sep}{params}"
 
-    req = urllib.request.Request(url, headers={"User-Agent": "okhttp/3.10.0"})
     try:
-        with urllib.request.urlopen(req, timeout=10, context=_SSL_CTX) as resp:
-            text = resp.read().decode("utf-8", errors="replace").strip()
-            if not text or "暂不支持" in text or len(text) < 10:
-                return []
-            data = json.loads(text)
-            items = data.get("list", [])
+        text = http_get_sync(url, timeout=10, headers={"User-Agent": "okhttp/3.10.0"}).strip()
+        if not text or "暂不支持" in text or len(text) < 10:
+            return []
+        data = json.loads(text)
+        items = data.get("list", [])
 
-            filtered = []
-            for item in items:
-                vid = str(item.get("vod_id", ""))
-                name = item.get("vod_name", "")
-                parts = vid.split("_")
-                if len(parts) == 3 and all(p.isdigit() for p in parts):
-                    continue
-                if name.startswith("✈") or "关注" in name:
-                    continue
-                item["_site_key"] = site_key
-                item["_site_name"] = site_name
-                filtered.append(item)
+        filtered = []
+        for item in items:
+            vid = str(item.get("vod_id", ""))
+            name = item.get("vod_name", "")
+            parts = vid.split("_")
+            if len(parts) == 3 and all(p.isdigit() for p in parts):
+                continue
+            if name.startswith("✈") or "关注" in name:
+                continue
+            item["_site_key"] = site_key
+            item["_site_name"] = site_name
+            filtered.append(item)
 
-            if filtered:
-                has_pic = any(i.get("vod_pic") for i in filtered)
-                if not has_pic:
-                    _fetch_pics_sync(base, filtered)
+        if filtered:
+            has_pic = any(i.get("vod_pic") for i in filtered)
+            if not has_pic:
+                _fetch_pics_sync(base, filtered)
 
-            return filtered
+        return filtered
     except Exception as e:
         logger.debug(f"Search {site_key} error: {e}")
         return []
@@ -253,19 +252,17 @@ def _fetch_pics_sync(base, items):
             clean_base = clean_base + "/api.php/provide/vod/"
         params = urllib.parse.urlencode({"ac": "detail", "ids": ",".join(ids)})
         url = f"{clean_base}?{params}"
-        req = urllib.request.Request(url, headers={"User-Agent": "okhttp/3.10.0"})
-        with urllib.request.urlopen(req, timeout=15, context=_SSL_CTX) as resp:
-            text = resp.read().decode("utf-8", errors="replace").strip()
-            detail = json.loads(text)
-            pic_map = {}
-            for d in detail.get("list", []):
-                vid = str(d.get("vod_id", ""))
-                pic = d.get("vod_pic", "")
-                if vid and pic:
-                    pic_map[vid] = pic
-            for item in items:
-                vid = str(item.get("vod_id", ""))
-                if not item.get("vod_pic") and vid in pic_map:
-                    item["vod_pic"] = pic_map[vid]
+        text = http_get_sync(url, timeout=15, headers={"User-Agent": "okhttp/3.10.0"}).strip()
+        detail = json.loads(text)
+        pic_map = {}
+        for d in detail.get("list", []):
+            vid = str(d.get("vod_id", ""))
+            pic = d.get("vod_pic", "")
+            if vid and pic:
+                pic_map[vid] = pic
+        for item in items:
+            vid = str(item.get("vod_id", ""))
+            if not item.get("vod_pic") and vid in pic_map:
+                item["vod_pic"] = pic_map[vid]
     except Exception as e:
         logger.debug(f"Fetch pics error: {e}")

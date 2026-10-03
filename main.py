@@ -72,7 +72,8 @@ if os.path.isdir(os.path.join(FRONTEND_DIST, "assets")):
 async def root():
     index_file = os.path.join(FRONTEND_DIST, "index.html")
     if os.path.exists(index_file):
-        return FileResponse(index_file)
+        # 入口页必须禁缓存：否则浏览器启发式缓存旧 index.html，构建更新后继续引用已删除的旧 chunk
+        return FileResponse(index_file, headers={"Cache-Control": "no-cache"})
     return JSONResponse({"code": 0, "msg": "FongMi TV Web"})
 
 
@@ -83,7 +84,7 @@ async def spa_fallback(full_path: str):
         raise HTTPException(404)
     index_file = os.path.join(FRONTEND_DIST, "index.html")
     if os.path.exists(index_file):
-        return FileResponse(index_file)
+        return FileResponse(index_file, headers={"Cache-Control": "no-cache"})
     raise HTTPException(404)
 
 

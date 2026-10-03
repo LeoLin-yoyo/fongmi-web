@@ -43,6 +43,26 @@ class TestHistoryAPI:
         assert data["items"][0]["name"] == "新名"
         assert data["items"][0]["episode"] == "第2集"
 
+    def test_position_only_save_keeps_metadata(self, client, setup_db):
+        """播放进度定期上报只带 position/duration，不应把已存的名称/封面/集数抹成空"""
+        client.post("/api/history", json={
+            "site_key": "s1", "vod_id": "v1", "name": "测试影片",
+            "pic": "http://img/1.jpg", "episode": "https://play/1",
+            "position": 0, "duration": 0,
+        })
+        # 模拟 DetailPage.savePosition 每 10 秒的进度上报
+        client.post("/api/history", json={
+            "site_key": "s1", "vod_id": "v1", "position": 60000, "duration": 120000,
+        })
+        r = client.get("/api/history/check", params={"site_key": "s1", "vod_id": "v1"})
+        data = r.json()
+        assert data["found"] is True
+        assert data["name"] == "测试影片"
+        assert data["episode"] == "https://play/1"
+        assert data["position"] == 60000
+        items = client.get("/api/history").json()["items"]
+        assert items[0]["pic"] == "http://img/1.jpg"
+
     def test_pagination(self, client, setup_db):
         for i in range(5):
             client.post("/api/history", json={

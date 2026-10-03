@@ -1,12 +1,13 @@
 """Spider Engine - dispatches to correct runtime based on site type"""
 import hashlib
+import os
+import re
 import threading
 import urllib.parse
-import urllib.request
 from collections import OrderedDict
 from loguru import logger
 
-from spider.net import ensure_http_url
+from spider.http_sync import http_get_sync
 
 try:
     from model.bean import Site
@@ -44,9 +45,7 @@ def _download_url(url: str, timeout: int = 3) -> str:
     path = urllib.parse.quote(parsed.path, safe='/:@!$&\'()*+,;=-._~')
     if path != parsed.path:
         url = urllib.parse.urlunparse(parsed._replace(path=path))
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return resp.read().decode("utf-8", errors="replace")
+    return http_get_sync(url, timeout=timeout, headers={"User-Agent": "Mozilla/5.0"})
 
 
 def _is_csp_class(api: str) -> bool:
@@ -62,19 +61,38 @@ def _is_py_file(api: str) -> bool:
     return api.endswith(".py")
 
 
+_BUILTIN_JS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "builtin.js")
+_builtin_cache = {"code": None, "keys": None}
+
+
+def _load_builtin_js():
+    """读取并缓存 builtin.js 源码与已实现的 csp_ 类名集合（文件只读一次）"""
+    if _builtin_cache["code"] is None:
+        import os as _os
+        if not _os.path.exists(_BUILTIN_JS_PATH):
+            return None
+        with open(_BUILTIN_JS_PATH, "r", encoding="utf-8") as f:
+            code = f.read()
+        _builtin_cache["code"] = code
+        _builtin_cache["keys"] = set(re.findall(r"CspRegistry\['([^']+)'\]", code))
+    return _builtin_cache
+
+
 def _get_builtin_spider(api: str, ext: str):
     """从内置 JS 注册表获取 csp_XXX 爬虫"""
     import os
-    js_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "builtin.js")
-    if not os.path.exists(js_path):
+    info = _load_builtin_js()
+    if not info:
+        return None
+    class_name = api if api.startswith("csp_") else "csp_" + api
+    # 快速失败：注册表未实现该类、ext 里也没有可用 API 地址（generic 爬虫无从取源），
+    # 直接放弃，避免为每个站点白建一个 QuickJS 运行时
+    if class_name[4:] not in info["keys"] and "http" not in (ext or ""):
         return None
     try:
-        with open(js_path, "r", encoding="utf-8") as f:
-            js_code = f.read()
         from spider.js_runtime import SpiderJSRuntime
         rt = SpiderJSRuntime()
-        rt.load_spider(js_code)
-        class_name = api if api.startswith("csp_") else "csp_" + api
+        rt.load_spider(info["code"])
         try:
             fn = rt.ctx.get("loadCspSpider")
             if fn:

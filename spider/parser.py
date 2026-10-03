@@ -2,10 +2,9 @@
 import json
 import re
 import urllib.parse
-import urllib.request
 from loguru import logger
 
-from spider.net import ensure_http_url
+from spider.http_sync import http_get_sync
 
 
 class ParserEngine:
@@ -39,25 +38,17 @@ class ParserEngine:
         return None
 
     def _jsonp_parse(self, parse_url: str, url: str, flag: str) -> str | None:
-        import ssl
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-
         filled = parse_url.replace("{url}", urllib.parse.quote(url, safe=""))
         filled = filled.replace("{flag}", flag)
 
-        ensure_http_url(filled)
-        req = urllib.request.Request(filled, headers={"User-Agent": "okhttp/3.10.0"})
         try:
-            with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
-                text = resp.read().decode("utf-8", errors="replace").strip()
-                match = re.search(r'\{[^}]+\}', text)
-                if match:
-                    data = json.loads(match.group())
-                    return data.get("url", "") or data.get("playUrl", "")
-                data = json.loads(text)
+            text = http_get_sync(filled, timeout=15, headers={"User-Agent": "okhttp/3.10.0"}).strip()
+            match = re.search(r'\{[^}]+\}', text)
+            if match:
+                data = json.loads(match.group())
                 return data.get("url", "") or data.get("playUrl", "")
+            data = json.loads(text)
+            return data.get("url", "") or data.get("playUrl", "")
         except Exception as e:
             logger.debug(f"JSONP parse error: {e}")
             return None

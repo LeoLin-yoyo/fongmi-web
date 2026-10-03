@@ -336,7 +336,7 @@ async function loadDetail(ids: string) {
     }
     parseEpisodes()
     if (flags.value.length) {
-      activeFlag.value = flags.value[0].flag
+      activeFlag.value = flags.value[bestFlagIndex()].flag
     }
     if (route.query.autoplay && !currentUrl.value) {
       autoPlayResume()
@@ -360,6 +360,25 @@ function parseEpisodes() {
     }).filter((ep: { url: string }) => ep.url)
     return { flag, name: flag || `源${i + 1}`, episodes: eps }
   })
+}
+
+/** 线路名估分：默认别落在低清线路，优先 4K/蓝光 > 1080/高清 > 720/标清 > 流畅/直连 */
+function flagQualityScore(name: string): number {
+  const n = (name || '').toLowerCase()
+  let s = 0
+  if (/4k|2160|蓝光|原盘|remux/.test(n)) s += 100
+  if (/1080|高清|超清|hd/.test(n)) s += 50
+  if (/720|标清|sd/.test(n)) s += 20
+  if (/m3u8|直连|普通|流畅/.test(n)) s += 5
+  return s
+}
+
+function bestFlagIndex(): number {
+  let best = 0
+  for (let i = 1; i < flags.value.length; i++) {
+    if (flagQualityScore(flags.value[i].name) > flagQualityScore(flags.value[best].name)) best = i
+  }
+  return best
 }
 
 async function checkKeep() {
@@ -436,7 +455,24 @@ function switchToSource(item: any) {
   }
 }
 
-function playEpisode(flag: string, ep: { name: string; url: string }, idx?: number) {
+/** 直链判定：http(s) 且以媒体扩展名结尾的 URL 直接播；其余（爬虫 id、网页地址）
+ *  走 /vod/player 让 spider playerContent + 解析器解析，失败回退原始串 */
+function isDirectMedia(url: string): boolean {
+  return /^https?:\/\//i.test(url) && /\.(m3u8|mp4|flv|mkv|avi|ts|mpd|mov|webm)(\?|#|$)/i.test(url)
+}
+
+async function resolvePlayUrl(url: string): Promise<{ url: string; headers?: Record<string, string> }> {
+  if (isDirectMedia(url)) return { url }
+  try {
+    const { vodAPI } = await import('@/api/vod')
+    const res: any = await vodAPI.player(siteKey.value, activeFlag.value, url)
+    const real = res?.url || res?.data?.url
+    if (typeof real === 'string' && real) return { url: real, headers: res?.headers || res?.data?.headers }
+  } catch { /* 解析失败回退原始地址 */ }
+  return { url }
+}
+
+async function playEpisode(flag: string, ep: { name: string; url: string }, idx?: number) {
   activeFlag.value = flag
   currentUrl.value = ep.url
   currentEpName.value = ep.name
@@ -451,10 +487,11 @@ function playEpisode(flag: string, ep: { name: string; url: string }, idx?: numb
     destroyDanmaku()
     seekDanmaku(0)
   }
-  setTimeout(() => {
+  setTimeout(async () => {
     setupVideoEvents()
     setupPositionTracking()
-    initPlayer(ep.url)
+    const final = await resolvePlayUrl(ep.url)
+    initPlayer(final.url, final.headers)
     checkHistoryPosition()
     autoNextCallback.value = onAutoNextTriggered
     if (danmakuVisible.value && videoRef.value) {
@@ -466,8 +503,9 @@ function playEpisode(flag: string, ep: { name: string; url: string }, idx?: numb
 }
 
 function playFirst() {
-  if (flags.value.length && flags.value[0].episodes.length) {
-    playEpisode(flags.value[0].flag, flags.value[0].episodes[0], 0)
+  if (flags.value.length && flags.value[bestFlagIndex()].episodes.length) {
+    const f = flags.value[bestFlagIndex()]
+    playEpisode(f.flag, f.episodes[0], 0)
   }
 }
 

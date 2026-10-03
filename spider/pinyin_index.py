@@ -61,10 +61,13 @@ class TitleIndex:
         if not self._dirty:
             return
         try:
-            os.makedirs(_DATA_DIR, exist_ok=True)
-            tmp = _INDEX_FILE + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(self._entries, f, ensure_ascii=False)
+            idx_dir = os.path.dirname(os.path.realpath(_INDEX_FILE))
+            tmp = os.path.realpath(os.path.join(idx_dir, os.path.basename(_INDEX_FILE) + ".tmp"))
+            if not tmp.startswith(idx_dir + os.sep):
+                raise ValueError("index temp path escapes index dir")
+            os.makedirs(idx_dir, exist_ok=True)
+            from pathlib import Path
+            Path(tmp).write_text(json.dumps(self._entries, ensure_ascii=False), encoding="utf-8")
             os.replace(tmp, _INDEX_FILE)
             self._dirty = False
         except Exception as e:

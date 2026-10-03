@@ -1,15 +1,9 @@
 """HTTP Spider for type=1 JSON API sites (standard PHP VOD API)"""
 import json
-import ssl
-import httpx
+import urllib.parse
 from loguru import logger
 
-from spider.net import ensure_http_url
-
-
-_SSL_CTX = ssl.create_default_context()
-_SSL_CTX.check_hostname = False
-_SSL_CTX.verify_mode = ssl.CERT_NONE
+from spider.http_sync import http_get_sync
 
 
 class HttpSpider:
@@ -29,7 +23,6 @@ class HttpSpider:
         base = self.api_url.split("?")[0].rstrip("/") if "?" in self.api_url else self.api_url.rstrip("/")
         # 仅裸域名补默认路径；配置已带 API 路径（如 api.php/seaxml/vod）时原样使用，
         # 否则会拼出 .../seaxml/vod/api.php/provide/vod/ 这类失效地址
-        import urllib.parse
         if not urllib.parse.urlparse(base).path.strip("/"):
             base = base + "/api.php/provide/vod/"
         query = ""
@@ -40,12 +33,8 @@ class HttpSpider:
         return f"{base}{sep}{query}" if query else base
 
     def _fetch(self, url: str) -> str:
-        import urllib.request
-        ensure_http_url(url)
-        req = urllib.request.Request(url, headers=self._headers)
         try:
-            with urllib.request.urlopen(req, timeout=15, context=_SSL_CTX) as resp:
-                return resp.read().decode("utf-8", errors="replace")
+            return http_get_sync(url, timeout=15, headers=self._headers)
         except Exception as e:
             logger.debug(f"Fetch failed {url}: {e}")
             return ""

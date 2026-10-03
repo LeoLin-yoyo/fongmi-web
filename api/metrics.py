@@ -171,8 +171,8 @@ async def metrics_export():
     summary = _summary()
     os.makedirs(_METRICS_DIR, exist_ok=True)
     out = os.path.join(_METRICS_DIR, f"baseline-{datetime.now().strftime('%Y%m%d')}.json")
-    with open(out, "w", encoding="utf-8") as f:
-        json.dump(summary, f, ensure_ascii=False, indent=2)
+    from pathlib import Path
+    Path(out).write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     return {"code": 0, "file": out, "summary": summary}
 
 

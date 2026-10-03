@@ -298,7 +298,9 @@ async function loadContinueWatching() {
   try {
     const { historyAPI } = await import('@/api/vod')
     const res: any = await historyAPI.list(1, 20)
-    continueList.value = res?.items || []
+    // 空名字的条目渲染成空白卡（历史进度上报曾把元数据抹空），且无 site_key/vod_id/episode 时点击是死路径，一律不展示
+    continueList.value = (res?.items || []).filter((h: any) =>
+      h.name && ((h.site_key && h.vod_id) || h.episode))
     if (continueList.value.length === 0) {
       const saved = localStorage.getItem('fongmi_interests')
       showColdStart.value = !saved

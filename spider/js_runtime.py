@@ -185,13 +185,15 @@ class SpiderJSRuntime:
     _QJS_LOCK = threading.Lock()
 
     def __init__(self):
-        self.ctx = quickjs.Context()
-        self._logs: list[str] = []
-        self._net = NetClient()
-        self._fetch = _SyncFetch(self._net)
-        self._html_store: dict[int, _HTMLNode] = {}
-        self._html_counter = 0
-        self._inject_globals()
+        # quickjs.Context() 创建与全局注入涉及共享 C 状态，必须持全局锁（进程级串行是硬性要求）
+        with SpiderJSRuntime._QJS_LOCK:
+            self.ctx = quickjs.Context()
+            self._logs: list[str] = []
+            self._net = NetClient()
+            self._fetch = _SyncFetch(self._net)
+            self._html_store: dict[int, _HTMLNode] = {}
+            self._html_counter = 0
+            self._inject_globals()
 
     def _inject_globals(self):
         logs = self._logs

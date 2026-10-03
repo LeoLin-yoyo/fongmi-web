@@ -109,8 +109,8 @@ def set_proxy(proxy: str):
         cfg = {}
     cfg["proxy"] = proxy
     os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
-    with open(_CONFIG_PATH, "w") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    from pathlib import Path
+    Path(_CONFIG_PATH).write_text(json.dumps(cfg, ensure_ascii=False, indent=2))
 
 
 def get_proxy_url() -> str:

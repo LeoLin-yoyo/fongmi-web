@@ -4,8 +4,10 @@ import os
 import subprocess
 import threading
 import time
-import urllib.request
 
+import httpx
+
+from spider.http_sync import http_post_json_sync
 from spider.net import ensure_http_url
 
 _NODE_PROC = None
@@ -28,7 +30,7 @@ def _ensure_node():
             )
             for _ in range(20):
                 try:
-                    urllib.request.urlopen("http://127.0.0.1:19999/", timeout=1)
+                    httpx.get("http://127.0.0.1:19999/", timeout=1)
                     break
                 except Exception:
                     time.sleep(0.2)
@@ -38,12 +40,10 @@ def _ensure_node():
 
 
 def _post(payload):
-    data = json.dumps(payload).encode()
-    node_url = ensure_http_url("http://127.0.0.1:19999/", allow_private=True)
-    req = urllib.request.Request(node_url, data=data, headers={"Content-Type": "application/json"})
+    # 硬编码本机 Node 引擎地址，显式放行私网校验
+    ensure_http_url("http://127.0.0.1:19999/", allow_private=True)
     try:
-        with urllib.request.urlopen(req, timeout=35) as resp:
-            return json.loads(resp.read())
+        return http_post_json_sync("http://127.0.0.1:19999/", payload, timeout=35)
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
