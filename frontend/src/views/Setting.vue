@@ -1,5 +1,6 @@
 <template>
   <div class="settings-page">
+    <BackTop />
     <div class="page-header">
       <h2>
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-4px;margin-right:6px">
@@ -9,7 +10,19 @@
       </h2>
     </div>
 
-    <div class="section">
+    <nav class="anchor-bar" aria-label="设置项快速定位">
+      <button
+        v-for="s in sections"
+        :key="s.key"
+        class="anchor-chip"
+        :class="{ active: activeSection === s.key }"
+        @click="scrollToSection(s.key)"
+      >
+        {{ s.label }}
+      </button>
+    </nav>
+
+    <div class="section" id="sec-subscribe">
       <n-card title="订阅管理">
         <n-tabs type="line" animated>
           <n-tab-pane name="url" tab="点播源导入">
@@ -59,27 +72,37 @@
       </n-card>
     </div>
 
-    <div class="section">
-      <n-card title="点播配置列表">
-        <div v-if="!configs.length" class="no-config">暂无配置</div>
-        <div v-for="cfg in configs" :key="cfg.id" class="config-item">
-          <div class="config-info">
-            <span class="config-name">{{ cfg.name || '未命名配置' }}</span>
-            <n-tag v-if="cfg.enabled" size="small" type="success">已启用</n-tag>
-            <n-tag v-else size="small">已禁用</n-tag>
-            <span class="config-meta">{{ cfg.type === 'live' ? '直播' : '点播' }}</span>
-            <span v-if="cfg.url" class="config-url" :title="cfg.url">{{ cfg.url }}</span>
+    <div class="section" id="sec-configs">
+      <n-card>
+        <template #header>
+          <div class="card-head">
+            <span>点播配置列表</span>
+            <n-button size="tiny" quaternary @click="toggleCollapse('configs')">
+              {{ collapsed.configs ? `展开（${configs.length}）` : '收起' }}
+            </n-button>
           </div>
-          <div class="config-actions">
-            <n-switch :value="!!cfg.enabled" @update:value="() => toggle(cfg.id)" />
-            <n-button size="small" ghost @click="startRename(cfg)">重命名</n-button>
-            <n-button size="small" type="error" ghost @click="remove(cfg.id)">删除</n-button>
+        </template>
+        <div v-show="!collapsed.configs">
+          <div v-if="!configs.length" class="no-config">暂无配置</div>
+          <div v-for="cfg in configs" :key="cfg.id" class="config-item">
+            <div class="config-info">
+              <span class="config-name">{{ cfg.name || '未命名配置' }}</span>
+              <n-tag v-if="cfg.enabled" size="small" type="success">已启用</n-tag>
+              <n-tag v-else size="small">已禁用</n-tag>
+              <span class="config-meta">{{ cfg.type === 'live' ? '直播' : '点播' }}</span>
+              <span v-if="cfg.url" class="config-url" :title="cfg.url">{{ cfg.url }}</span>
+            </div>
+            <div class="config-actions">
+              <n-switch :value="!!cfg.enabled" @update:value="() => toggle(cfg.id)" />
+              <n-button size="small" ghost @click="startRename(cfg)">重命名</n-button>
+              <n-button size="small" type="error" ghost @click="remove(cfg.id)">删除</n-button>
+            </div>
           </div>
         </div>
       </n-card>
     </div>
 
-    <div class="section">
+    <div class="section" id="sec-livesrc">
       <n-card title="直接导入的直播源">
         <div v-if="!liveSources.length" class="no-config">暂无直接导入的直播源</div>
         <div v-for="src in liveSources" :key="src.id" class="config-item">
@@ -96,7 +119,7 @@
       </n-card>
     </div>
 
-    <div class="section">
+    <div class="section" id="sec-proxy">
       <n-card title="代理设置">
         <n-space vertical :size="12">
           <n-input v-model:value="proxy" placeholder="http://127.0.0.1:7890 （留空则自动尝试系统代理）" />
@@ -106,7 +129,7 @@
       </n-card>
     </div>
 
-    <div class="section">
+    <div class="section" id="sec-play">
       <n-card title="播放设置">
         <div class="pref-item">
           <div class="pref-info">
@@ -125,8 +148,17 @@
       </n-card>
     </div>
 
-    <div class="section">
-      <n-card title="本地视频">
+    <div class="section" id="sec-local">
+      <n-card>
+        <template #header>
+          <div class="card-head">
+            <span>本地视频</span>
+            <n-button size="tiny" quaternary @click="toggleCollapse('local')">
+              {{ collapsed.local ? `展开（${dirs.length} 目录）` : '收起' }}
+            </n-button>
+          </div>
+        </template>
+        <div v-show="!collapsed.local">
         <div class="stats-row">
           <div class="stat-card">
             <div class="num">{{ stats.video_count ?? '–' }}</div>
@@ -187,7 +219,7 @@
               </div>
             </div>
             <div v-if="!groups.length" class="no-group">尚未创建聚合选项卡</div>
-            <div v-for="g in groups" :key="g.id" class="dir-item">
+            <div v-for="g in groups" :key="g.id" class="group-item">
               <div class="dir-info">
                 <div class="dir-path" :title="groupDirsLabel(g)">{{ g.name }}</div>
                 <div class="dir-meta">{{ groupDirsLabel(g) }}</div>
@@ -199,17 +231,19 @@
             </div>
           </div>
         </n-space>
+        </div>
       </n-card>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive, onMounted, onUnmounted } from 'vue'
+import { ref, computed, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import { useMessage, NCard, NTabs, NTabPane, NInput, NButton, NUpload, NUploadDragger, NText, NTag, NSpace, NSwitch, NSelect } from 'naive-ui'
 import { importConfig, importBatch, getConfigs, deleteConfig, toggleConfig, checkBatch, importLiveBatch, getLiveSources, deleteLiveSource, toggleLiveSource, renameConfig } from '@/api/config'
 import { localAPI } from '@/api/local'
 import { playOpenPrefs } from '@/utils/playPrefs'
+import BackTop from '@/components/BackTop.vue'
 
 const message = useMessage()
 const url = ref('')
@@ -238,6 +272,65 @@ let pollTimer: number | undefined
 
 const dirOptions = computed(() => dirs.value.map(d => ({ label: d.path, value: d.id })))
 const canSaveGroup = computed(() => !!groupName.value.trim() && groupDirIds.value.length >= 2)
+
+// ── 锚点菜单 ──
+const sections = [
+  { key: 'sec-subscribe', label: '订阅管理' },
+  { key: 'sec-configs', label: '点播配置' },
+  { key: 'sec-livesrc', label: '直播源' },
+  { key: 'sec-proxy', label: '代理设置' },
+  { key: 'sec-play', label: '播放设置' },
+  { key: 'sec-local', label: '本地视频' },
+]
+const activeSection = ref('sec-subscribe')
+/** App 外层 n-layout 的滚动容器；不能用 window，也不用内层 .n-layout-scroll-container */
+function scrollContainer() {
+  return document.querySelector<HTMLElement>('.n-layout--absolute-positioned > .n-layout-scroll-container')
+}
+
+function scrollToSection(key: string) {
+  const el = document.getElementById(key)
+  const container = scrollContainer()
+  if (!el || !container) return
+  activeSection.value = key
+  // 减去吸顶头部（56px）+ 锚点条高度，避免目标被遮住
+  const top = el.offsetTop - container.offsetTop - 106
+  container.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
+}
+
+let spyRaf = 0
+function onScrollSpy() {
+  if (spyRaf) return
+  spyRaf = window.requestAnimationFrame(() => {
+    spyRaf = 0
+    const container = scrollContainer()
+    if (!container) return
+    const pos = container.scrollTop + 140
+    let current = sections[0].key
+    for (const s of sections) {
+      const el = document.getElementById(s.key)
+      if (el && el.offsetTop - container.offsetTop <= pos) current = s.key
+    }
+    activeSection.value = current
+  })
+}
+
+// ── 卡片折叠（状态持久化，长列表默认收起以内缩短滚动距离）──
+const COLLAPSE_KEY = 'fongmi_setting_collapse'
+const collapsed = ref<Record<string, boolean>>(loadCollapse())
+
+function loadCollapse(): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem(COLLAPSE_KEY)
+    if (raw) return { configs: true, local: true, ...JSON.parse(raw) }
+  } catch {}
+  return { configs: true, local: true }
+}
+
+function toggleCollapse(key: string) {
+  collapsed.value = { ...collapsed.value, [key]: !collapsed.value[key] }
+  try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify(collapsed.value)) } catch {}
+}
 
 function formatSize(bytes: number) {
   if (bytes === null || bytes === undefined) return '–'
@@ -401,9 +494,16 @@ onMounted(async () => {
     await pollLocalStatus()
     if (scanning.value) refreshLocal()
   }, 2000)
+  await nextTick()
+  scrollContainer()?.addEventListener('scroll', onScrollSpy, { passive: true })
+  onScrollSpy()
 })
 
-onUnmounted(() => clearInterval(pollTimer))
+onUnmounted(() => {
+  clearInterval(pollTimer)
+  scrollContainer()?.removeEventListener('scroll', onScrollSpy)
+  if (spyRaf) cancelAnimationFrame(spyRaf)
+})
 
 async function saveProxy() {
   try {
@@ -562,8 +662,25 @@ async function removeLive(id: number) {
 
 <style scoped>
 .settings-page { padding: 20px; max-width: 800px; margin: 0 auto; }
-.page-header h2 { margin: 0 0 20px; }
-.section { margin-bottom: 20px; }
+.page-header h2 { margin: 0 0 12px; }
+/* 锚点条：吸顶在 App 头部(56px)之下，横向滚动避免窄屏挤压 */
+.anchor-bar {
+  position: sticky; top: 56px; z-index: 10;
+  display: flex; gap: 8px; overflow-x: auto; padding: 8px 0 10px;
+  margin-bottom: 14px; background: var(--bg-color);
+  border-bottom: 1px solid var(--n-border-color);
+  scrollbar-width: none;
+}
+.anchor-bar::-webkit-scrollbar { display: none; }
+.anchor-chip {
+  flex-shrink: 0; padding: 5px 14px; border-radius: 16px; cursor: pointer;
+  border: 1px solid var(--n-border-color); background: var(--n-base-color);
+  color: #888; font-size: 13px; transition: all 0.2s; white-space: nowrap;
+}
+.anchor-chip:hover { color: var(--n-text-color); border-color: var(--n-primary-color); }
+.anchor-chip.active { background: var(--n-primary-color); border-color: var(--n-primary-color); color: #fff; font-weight: 600; }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.section { margin-bottom: 20px; scroll-margin-top: 106px; }
 .btn-row { display: flex; gap: 10px; }
 .check-results { max-height: 300px; overflow-y: auto; border: 1px solid var(--n-border-color); border-radius: 8px; padding: 8px; }
 .check-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 4px; font-size: 12px; }
@@ -586,7 +703,7 @@ async function removeLive(id: number) {
 .stat-card .num { font-size: 24px; font-weight: 700; }
 .stat-card .label { font-size: 12px; color: #888; margin-top: 4px; }
 .dir-form { display: flex; gap: 10px; }
-.dir-item { display: flex; align-items: center; gap: 12px; padding: 12px; background: var(--n-base-color); border: 1px solid var(--n-border-color); border-radius: 10px; }
+.dir-item, .group-item { display: flex; align-items: center; gap: 12px; padding: 12px; background: var(--n-base-color); border: 1px solid var(--n-border-color); border-radius: 10px; }
 .dir-info { flex: 1; min-width: 0; }
 .dir-path { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dir-meta { font-size: 12px; color: #888; margin-top: 4px; display: flex; gap: 10px; flex-wrap: wrap; }

@@ -1,5 +1,12 @@
 import { test, expect } from '@playwright/test'
 
+// 「本地视频」卡片默认收起，用例需先展开才能操作目录行
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() =>
+    localStorage.setItem('fongmi_setting_collapse', JSON.stringify({ configs: true, local: false }))
+  )
+})
+
 test('设置页目录顺序可调整', async ({ page }) => {
   await page.goto('/setting')
   const items = page.locator('.dir-item')

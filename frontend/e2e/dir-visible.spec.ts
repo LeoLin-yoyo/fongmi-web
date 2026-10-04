@@ -1,16 +1,26 @@
 import { test, expect } from '@playwright/test'
 
+// 「本地视频」卡片默认收起，用例需先展开才能操作目录行
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() =>
+    localStorage.setItem('fongmi_setting_collapse', JSON.stringify({ configs: true, local: false }))
+  )
+})
+
 test('目录显示/隐藏：设置页开关 → 片库页选项卡增减 → 恢复', async ({ page }) => {
+  const dirs = await (await page.request.get('/api/local/dirs')).json()
+  test.skip(dirs.length < 2, '需要至少两个目录')
+  const target = dirs[1]
+  // 前置：确保目标目录处于显示态，用例不依赖残留状态
+  await page.request.patch(`/api/local/dirs/${target.id}/visible`, { data: { visible: true } })
+
   // ── 设置页：隐藏第二个目录 ──
   await page.goto('/setting')
   const items = page.locator('.dir-item')
   await expect(items.first()).toBeVisible({ timeout: 15000 })
-  const dirs = await (await page.request.get('/api/local/dirs')).json()
-  test.skip(dirs.length < 2, '需要至少两个目录')
-  const target = dirs[1]
 
   const row = items.nth(1)
-  await expect(row.locator('.n-switch')).toHaveClass(/n-switch--active/)  // 默认显示
+  await expect(row.locator('.n-switch')).toHaveClass(/n-switch--active/)
   await row.locator('.n-switch').click()
   await expect(row.locator('.n-switch')).not.toHaveClass(/n-switch--active/)
   await expect(row.locator('.dir-off-tag')).toBeVisible()
