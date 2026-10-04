@@ -90,6 +90,15 @@
           <div class="card-cover">
             <img :src="thumbUrl(v.id)" :alt="v.name" loading="lazy" @error="onImgError($event)" />
             <span v-if="v.duration" class="duration-badge">{{ formatDuration(v.duration) }}</span>
+            <button
+              v-if="extPlayerEnabled && !selectMode"
+              class="card-ext"
+              title="用外部播放器播放"
+              :disabled="extPlaying.has(v.id)"
+              @click.stop="playExternal(v)"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><path d="M10 7.5v6l5-3z" fill="currentColor" stroke="none"/></svg>
+            </button>
           </div>
           <div class="card-info">
             <div class="video-name" :title="v.name">{{ v.name }}</div>
@@ -146,6 +155,8 @@ const scanBusy = ref(false)
 const sentinel = ref<HTMLElement | null>(null)
 const selectMode = ref(false)
 const selected = reactive(new Set<number>())
+const extPlayerEnabled = ref(false)
+const extPlaying = reactive(new Set<number>())
 let searchTimer: number | undefined
 let observer: IntersectionObserver | null = null
 
@@ -239,6 +250,20 @@ function onCardClick(v: any) {
     else selected.add(v.id)
   } else {
     openPlayPage({ path: `/local/player/${v.id}` }, 'local')
+  }
+}
+
+/** 调用设置页配置的外部播放器（PotPlayer 等）播放；播放器路径校验在后端 */
+async function playExternal(v: any) {
+  if (extPlaying.has(v.id)) return
+  extPlaying.add(v.id)
+  try {
+    await localAPI.externalPlay(v.id)
+    message.success(`已调用外部播放器播放「${v.name}」`)
+  } catch (e: any) {
+    message.error(`外部播放失败：${e?.response?.data?.detail || e.message}`)
+  } finally {
+    extPlaying.delete(v.id)
   }
 }
 
@@ -349,6 +374,11 @@ let pollTimer: number | undefined
 onMounted(async () => {
   dirs.value = await localAPI.dirs().catch(() => [])
   groups.value = await localAPI.groups().catch(() => [])
+  // 配置了外部播放器路径才显示卡片角标按钮
+  fetch('/api/system/config')
+    .then((r) => r.json())
+    .then((data) => { extPlayerEnabled.value = !!data?.data?.external_player_path })
+    .catch(() => {})
   ensureActiveTab()
   if (dirId.value === null && groupId.value === null) loadVideos()
   localAPI.scanAll().catch(() => {})
@@ -398,6 +428,10 @@ onUnmounted(() => {
 .card-cover img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.3s; }
 .video-card:hover .card-cover img { transform: scale(1.05); }
 .duration-badge { position: absolute; right: 8px; bottom: 8px; padding: 2px 7px; border-radius: 6px; background: rgba(0,0,0,0.72); color: #fff; font-size: 12px; font-weight: 600; }
+.card-ext { position: absolute; top: 8px; right: 8px; z-index: 3; width: 26px; height: 26px; border: none; border-radius: 7px; background: rgba(0,0,0,0.55); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0.85; transition: opacity 0.2s, background 0.2s; }
+.card-ext:hover { background: var(--n-primary-color); opacity: 1; }
+.card-ext:disabled { opacity: 0.4; cursor: wait; }
+.card-ext svg { width: 15px; height: 15px; }
 .card-info { padding: 10px 12px; }
 .video-name { font-size: 14px; font-weight: 500; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 6px; }
 .video-meta { display: flex; gap: 5px; flex-wrap: wrap; }

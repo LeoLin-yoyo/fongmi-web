@@ -102,12 +102,27 @@ def get_proxy_with_detect() -> str:
 
 def set_proxy(proxy: str):
     """Save proxy URL to config file"""
+    set_config_value("proxy", proxy)
+
+
+def get_config_value(key: str, default: str = "") -> str:
+    """读 data/config.json 顶层字符串配置（外部播放器路径等应用级设置）"""
+    try:
+        with open(_CONFIG_PATH, "r") as f:
+            cfg = json.load(f)
+        return str(cfg.get(key, default) or "")
+    except (FileNotFoundError, json.JSONDecodeError):
+        return default
+
+
+def set_config_value(key: str, value: str) -> None:
+    """写 data/config.json 顶层键（读-改-写，不覆盖其他键）；文件落盘，重启不丢"""
     try:
         with open(_CONFIG_PATH, "r") as f:
             cfg = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         cfg = {}
-    cfg["proxy"] = proxy
+    cfg[key] = value
     os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
     from pathlib import Path
     Path(_CONFIG_PATH).write_text(json.dumps(cfg, ensure_ascii=False, indent=2))

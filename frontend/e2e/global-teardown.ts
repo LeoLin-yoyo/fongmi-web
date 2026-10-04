@@ -59,6 +59,14 @@ export default async function globalTeardown(config: FullConfig) {
     errors.push(`聚合组还原失败: ${e.message}`)
   }
 
+  // 系统设置：还原外部播放器路径。proxy 的 GET 值含「环境变量/系统代理」回退语义，
+  // 回写会把派生值固化进 config.json，故只还原无回退语义的 external_player_path
+  try {
+    await api('/api/system/config', { method: 'POST', ...json({ external_player_path: snap.system?.external_player_path ?? '' }) })
+  } catch (e: any) {
+    errors.push(`系统设置还原失败: ${e.message}`)
+  }
+
   if (errors.length) {
     throw new Error(`[e2e-teardown] 真实数据还原失败，请手工检查：\n${errors.join('\n')}`)
   }

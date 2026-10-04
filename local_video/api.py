@@ -1,8 +1,11 @@
 """REST API 路由（挂载于 /api/local）。"""
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from fastapi.responses import FileResponse
+
+from spider.proxy_config import get_config_value
 
 from .config import MEDIA_TYPES, THUMB_DIR
 from .db import Database
@@ -230,6 +233,35 @@ def video_thumb(video_id: int):
         raise HTTPException(404, "无法生成缩略图")
     db.mark_thumb(video_id)
     return FileResponse(thumb, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
+
+
+@router.post("/videos/{video_id}/external-play")
+def external_play(video_id: int):
+    """用设置页配置的外部播放器（PotPlayer 等）打开本地视频文件。
+
+    播放器路径持久化于 data/config.json。Windows 用 ShellExecuteW 启动
+    （资源管理器双击同款 Shell 调用）：立即返回、播放器进程独立于后端、
+    程序与参数分离传递，路径含空格/中文安全。
+    """
+    row = _get_db().get_video(video_id)
+    if not row:
+        raise HTTPException(404, "视频不存在")
+    player = get_config_value("external_player_path").strip()
+    if not player:
+        raise HTTPException(400, "尚未配置外部播放器，请到「设置 → 本地视频」填写播放器路径")
+    if not os.path.isfile(player):
+        raise HTTPException(400, f"外部播放器路径不存在: {player}")
+    video_path = Path(row["path"])
+    if not video_path.is_file():
+        raise HTTPException(404, "视频文件已被移动或删除")
+    if os.name != "nt":
+        raise HTTPException(500, "外部播放器功能目前仅支持 Windows")
+    import ctypes
+    SW_SHOWNORMAL = 1
+    ret = ctypes.windll.shell32.ShellExecuteW(None, "open", player, f'"{video_path}"', None, SW_SHOWNORMAL)
+    if ret <= 32:
+        raise HTTPException(500, f"启动外部播放器失败（ShellExecute 错误码 {ret}）")
+    return {"ok": True}
 
 
 @router.get("/stats")

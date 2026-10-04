@@ -11,6 +11,7 @@ export const localAPI = {
   scanStatus: () => request.get('/local/scan/status') as unknown as Promise<{ scanning: boolean; done: number; total: number; dir: string | null }>,
   videos: (params: Record<string, any> = {}) => request.get('/local/videos', { params }) as unknown as Promise<{ items: any[]; total: number; limit: number; offset: number }>,
   video: (id: number | string) => request.get(`/local/videos/${id}`),
+  externalPlay: (id: number) => request.post(`/local/videos/${id}/external-play`),
   deleteVideos: (ids: number[]) => request.delete(`/local/videos?ids=${ids.join(',')}`),
   stats: () => request.get('/local/stats') as unknown as Promise<{ video_count: number; dir_count: number; total_size: number }>,
   groups: () => request.get('/local/groups') as unknown as Promise<any[]>,

@@ -12,11 +12,16 @@ export default async function globalSetup(config: FullConfig) {
   const base = config.use?.baseURL || 'http://127.0.0.1:8000'
   let dirs: unknown
   let groups: unknown
+  let system: any = null
   try {
     dirs = await (await fetch(`${base}/api/local/dirs`)).json()
     groups = await (await fetch(`${base}/api/local/groups`)).json()
+    system = await (await fetch(`${base}/api/system/config`)).json()
   } catch (e: any) {
     throw new Error(`e2e 需要后端已运行于 ${base}（快照真实数据失败）：${e.message}`)
   }
-  writeFileSync(SNAPSHOT_FILE, JSON.stringify({ dirs, groups }, null, 2))
+  writeFileSync(
+    SNAPSHOT_FILE,
+    JSON.stringify({ dirs, groups, system: { external_player_path: system?.data?.external_player_path ?? '' } }, null, 2),
+  )
 }

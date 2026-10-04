@@ -367,3 +367,79 @@ def test_migrate_old_dirs_schema_adds_visible(tmp_path):
     rows = db.list_dirs()
     assert rows[0]["visible"] == 1
     assert db.set_dir_visible(rows[0]["id"], False)["visible"] == 0
+
+
+# ---- 外部播放器调用 ----
+
+def _setup_player(tmp_path, monkeypatch, exe="fake_player.exe"):
+    """隔离 config.json 并写入一个存在的假播放器路径，返回其绝对路径。"""
+    import spider.proxy_config as pc
+    monkeypatch.setattr(pc, "_CONFIG_PATH", str(tmp_path / "config.json"))
+    player = tmp_path / exe
+    player.write_bytes(b"MZ")
+    pc.set_config_value("external_player_path", str(player))
+    return str(player)
+
+
+def test_external_play_requires_config(client, tmp_path, monkeypatch):
+    import spider.proxy_config as pc
+    monkeypatch.setattr(pc, "_CONFIG_PATH", str(tmp_path / "config.json"))
+    video = client.get("/api/local/videos").json()["items"][0]
+    r = client.post(f"/api/local/videos/{video['id']}/external-play")
+    assert r.status_code == 400
+    assert "尚未配置" in r.json()["detail"]
+
+
+def test_external_play_player_path_missing(client, tmp_path, monkeypatch):
+    import spider.proxy_config as pc
+    monkeypatch.setattr(pc, "_CONFIG_PATH", str(tmp_path / "config.json"))
+    pc.set_config_value("external_player_path", str(tmp_path / "nope.exe"))
+    video = client.get("/api/local/videos").json()["items"][0]
+    r = client.post(f"/api/local/videos/{video['id']}/external-play")
+    assert r.status_code == 400
+    assert "不存在" in r.json()["detail"]
+
+
+def test_external_play_video_not_found(client, tmp_path, monkeypatch):
+    _setup_player(tmp_path, monkeypatch)
+    r = client.post("/api/local/videos/99999/external-play")
+    assert r.status_code == 404
+
+
+def test_external_play_file_gone(client, tmp_path, monkeypatch):
+    _setup_player(tmp_path, monkeypatch)
+    video = client.get("/api/local/videos").json()["items"][0]
+    os.remove(video["path"])
+    r = client.post(f"/api/local/videos/{video['id']}/external-play")
+    assert r.status_code == 404
+    assert "移动或删除" in r.json()["detail"]
+
+
+def test_external_play_launches_player(client, tmp_path, monkeypatch):
+    player = _setup_player(tmp_path, monkeypatch)
+    video = client.get("/api/local/videos").json()["items"][0]
+    calls = []
+
+    import ctypes
+
+    def fake_shell_execute(hwnd, verb, exe, params, directory, show):
+        calls.append((exe, params))
+        return 42  # >32 视为成功
+
+    monkeypatch.setattr(ctypes.windll.shell32, "ShellExecuteW", fake_shell_execute)
+    r = client.post(f"/api/local/videos/{video['id']}/external-play")
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert len(calls) == 1
+    exe, params = calls[0]
+    assert exe == player
+    assert video["path"] in params  # 视频完整路径作为参数传给播放器
+
+
+def test_external_play_shellexecute_failure(client, tmp_path, monkeypatch):
+    _setup_player(tmp_path, monkeypatch)
+    video = client.get("/api/local/videos").json()["items"][0]
+    import ctypes
+    monkeypatch.setattr(ctypes.windll.shell32, "ShellExecuteW", lambda *a: 2)  # SE_ERR_FNF
+    r = client.post(f"/api/local/videos/{video['id']}/external-play")
+    assert r.status_code == 500
+    assert "ShellExecute" in r.json()["detail"]

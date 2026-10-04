@@ -174,6 +174,14 @@
           </div>
         </div>
         <n-space vertical :size="12">
+          <div class="ext-player-section">
+            <div class="group-title">外部播放器<span class="group-hint">本机播放器程序完整路径（如 PotPlayer），用于片库页视频卡片角标一键调用</span></div>
+            <div class="dir-form">
+              <n-input v-model:value="externalPlayer" placeholder="例如：D:\Program Files\DAUM\PotPlayer\PotPlayerMini64.exe" @keyup.enter="saveExternalPlayer" clearable />
+              <n-button type="primary" :loading="savingPlayer" @click="saveExternalPlayer">保存</n-button>
+            </div>
+            <p class="hint">路径持久化保存，应用重启不丢失；留空则片库页不显示外部播放按钮。</p>
+          </div>
           <div class="dir-form">
             <n-input v-model:value="newDir" placeholder="例如：F:\telegram" @keyup.enter="addDir" />
             <n-button type="primary" :loading="adding" :disabled="!newDir.trim()" @click="addDir">添加目录</n-button>
@@ -257,6 +265,8 @@ const liveChecking = ref(false)
 const liveCheckResults = ref<any[]>([])
 const liveSources = ref<any[]>([])
 const proxy = ref('')
+const externalPlayer = ref('')
+const savingPlayer = ref(false)
 const dirs = ref<any[]>([])
 const stats = ref<any>({})
 const newDir = ref('')
@@ -484,6 +494,7 @@ onMounted(async () => {
     const res = await fetch('/api/system/config')
     const data = await res.json()
     proxy.value = data?.data?.proxy || ''
+    externalPlayer.value = data?.data?.external_player_path || ''
   } catch {}
   await loadConfigs()
   await loadLiveSources()
@@ -515,6 +526,23 @@ async function saveProxy() {
     message.success('保存成功，请刷新页面生效')
   } catch (e: any) {
     message.error('保存失败: ' + (e?.message || ''))
+  }
+}
+
+async function saveExternalPlayer() {
+  savingPlayer.value = true
+  try {
+    const res = await fetch('/api/system/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ external_player_path: externalPlayer.value.trim() }),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    message.success('外部播放器路径已保存')
+  } catch (e: any) {
+    message.error('保存失败: ' + (e?.message || ''))
+  } finally {
+    savingPlayer.value = false
   }
 }
 
@@ -711,6 +739,8 @@ async function removeLive(id: number) {
 .dir-hidden .dir-path { opacity: 0.55; }
 .dir-off-tag { color: #e6a23c; }
 .group-section { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--n-divider-color); }
+/* 外部播放器区块与聚合区共用视觉，但用独立类名，避免 e2e 的 .group-section 选择器串味 */
+.ext-player-section { margin-top: 16px; }
 .group-title { font-weight: 600; font-size: 14px; margin-bottom: 10px; }
 .group-hint { font-size: 12px; color: #888; font-weight: 400; margin-left: 8px; }
 .group-form { display: flex; flex-direction: column; gap: 8px; }
