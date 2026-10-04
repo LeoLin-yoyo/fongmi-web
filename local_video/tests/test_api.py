@@ -123,6 +123,79 @@ def test_migrate_old_dirs_schema(tmp_path):
     assert not db.reorder_dirs([1])
 
 
+def test_dir_groups_crud_and_filter(client, tmp_path, sample_video):
+    lib_a = tmp_path / "ga"
+    lib_b = tmp_path / "gb"
+    lib_a.mkdir()
+    lib_b.mkdir()
+    shutil.copy2(sample_video, lib_a / "a.mp4")
+    shutil.copy2(sample_video, lib_b / "b.mp4")
+    shutil.copy2(sample_video, lib_b / "b2.mp4")
+    app_state.db.add_dir(str(lib_a))
+    app_state.db.add_dir(str(lib_b))
+    app_state.scanner.scan_dir(str(lib_a))
+    app_state.scanner.scan_dir(str(lib_b))
+    dirs = client.get("/api/local/dirs").json()
+    path_to_id = {d["path"]: d["id"] for d in dirs}
+    id_a, id_b = path_to_id[str(lib_a)], path_to_id[str(lib_b)]
+
+    # 校验：目录不足 2 个 / 名称为空 / 目录不存在 / 目录重复
+    r = client.post("/api/local/groups", json={"name": "X", "dir_ids": [id_a]})
+    assert r.status_code == 400
+    r = client.post("/api/local/groups", json={"name": "", "dir_ids": [id_a, id_b]})
+    assert r.status_code == 400
+    r = client.post("/api/local/groups", json={"name": "X", "dir_ids": [id_a, 99999]})
+    assert r.status_code == 400
+    r = client.post("/api/local/groups", json={"name": "X", "dir_ids": [id_a, id_a]})
+    assert r.status_code == 400
+
+    # 创建：ga(1) + gb(2) 合并查询 = 3 个视频
+    r = client.post("/api/local/groups", json={"name": "合并库", "dir_ids": [id_a, id_b]})
+    assert r.status_code == 200
+    group = r.json()
+    assert group["name"] == "合并库"
+    assert sorted(group["dir_ids"]) == sorted([id_a, id_b])
+    assert any(g["id"] == group["id"] for g in client.get("/api/local/groups").json())
+
+    data = client.get("/api/local/videos", params={"group_id": group["id"]}).json()
+    assert data["total"] == 3
+    assert {v["name"] for v in data["items"]} == {"a.mp4", "b.mp4", "b2.mp4"}
+
+    # dir_id 与 group_id 互斥
+    r = client.get("/api/local/videos", params={"group_id": group["id"], "dir_id": id_a})
+    assert r.status_code == 400
+
+    # 更新：换目录集合 + 改名
+    id_lib = path_to_id[next(p for p in path_to_id if p.endswith("lib"))]
+    r = client.put(f"/api/local/groups/{group['id']}", json={"name": "改名", "dir_ids": [id_lib, id_b]})
+    assert r.status_code == 200
+    assert r.json()["name"] == "改名"
+    data = client.get("/api/local/videos", params={"group_id": group["id"]}).json()
+    assert data["total"] == 3
+    assert {v["name"] for v in data["items"]} == {"demo.mp4", "b.mp4", "b2.mp4"}
+
+    # 不存在的组 → 空结果而非报错；删除后 404
+    assert client.get("/api/local/videos", params={"group_id": 99999}).json()["total"] == 0
+    assert client.delete(f"/api/local/groups/{group['id']}").status_code == 200
+    assert client.delete(f"/api/local/groups/{group['id']}").status_code == 404
+    assert client.put(f"/api/local/groups/{group['id']}", json={"name": "x", "dir_ids": [id_a, id_b]}).status_code == 404
+
+
+def test_delete_dir_cleans_groups(client, tmp_path):
+    db = app_state.db
+    a = db.add_dir(str(tmp_path / "ca"))
+    b = db.add_dir(str(tmp_path / "cb"))
+    (tmp_path / "ca").mkdir()
+    (tmp_path / "cb").mkdir()
+    g = db.create_group("G", [a["id"], b["id"]])
+    assert g and sorted(g["dir_ids"]) == sorted([a["id"], b["id"]])
+
+    r = client.delete(f"/api/local/dirs/{a['id']}")
+    assert r.status_code == 200
+    g2 = db.get_group(g["id"])
+    assert g2 is not None and g2["dir_ids"] == [b["id"]]
+
+
 def test_list_videos_search_sort(client):
     data = client.get("/api/local/videos").json()
     assert data["total"] == 1

@@ -30,19 +30,29 @@
       <n-select v-model:value="order" class="order-select" :options="orderOptions" />
     </div>
 
-    <div v-if="dirs.length > 1" class="chip-row">
+    <div v-if="dirs.length > 1 || groups.length" class="chip-row">
+      <button
+        v-for="g in groups"
+        :key="'g' + g.id"
+        class="chip chip-group"
+        :class="{ active: groupId === g.id }"
+        :title="groupDirsLabel(g)"
+        @click="selectGroup(g.id)"
+      >
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:3px"><rect x="3" y="3" width="12" height="12" rx="2"/><rect x="9" y="9" width="12" height="12" rx="2"/></svg>{{ g.name }}
+      </button>
       <button
         v-for="d in dirs"
         :key="d.id"
         class="chip"
         :class="{ active: dirId === d.id }"
-        @click="dirId = d.id"
+        @click="selectDir(d.id)"
       >
         {{ d.name }}
       </button>
     </div>
 
-    <div class="list-meta">共 {{ totalVideos }} 个视频</div>
+    <div class="list-meta">共 {{ total }} 个视频</div>
 
     <div v-if="scanning" class="scan-progress">
       <n-progress type="line" :percentage="scanPercent" :show-indicator="false" processing />
@@ -121,14 +131,15 @@ const message = useMessage()
 const PAGE = 60
 const keyword = ref('')
 const dirId = ref<number | null>(null)
+const groupId = ref<number | null>(null)
 const sort = ref('mtime')
 const order = ref('desc')
 const videos = ref<any[]>([])
 const total = ref(0)
-const totalVideos = ref(0)
 const loading = ref(true)
 const loadingMore = ref(false)
 const dirs = ref<any[]>([])
+const groups = ref<any[]>([])
 const scanStatus = ref({ scanning: false, done: 0, total: 0 })
 const wasScanning = ref(false)
 const sentinel = ref<HTMLElement | null>(null)
@@ -182,6 +193,42 @@ function toggleSelectMode() {
   if (!selectMode.value) selected.clear()
 }
 
+function dirNameOf(id: number) {
+  return dirs.value.find(d => d.id === id)?.name || `#${id}`
+}
+
+function groupDirsLabel(g: any) {
+  return (g.dir_ids || []).map(dirNameOf).join(' + ')
+}
+
+function selectDir(id: number) {
+  if (dirId.value === id) return
+  dirId.value = id
+  groupId.value = null
+}
+
+function selectGroup(id: number) {
+  if (groupId.value === id) return
+  groupId.value = id
+  dirId.value = null
+}
+
+/** 校正当前选项卡：组/目录被删后回退到第一个可用选项卡 */
+function ensureActiveTab() {
+  if (groupId.value !== null && groups.value.some(g => g.id === groupId.value)) return
+  if (dirId.value !== null && dirs.value.some(d => d.id === dirId.value)) return
+  if (groups.value.length) {
+    groupId.value = groups.value[0].id
+    dirId.value = null
+  } else if (dirs.value.length) {
+    dirId.value = dirs.value[0].id
+    groupId.value = null
+  } else {
+    dirId.value = null
+    groupId.value = null
+  }
+}
+
 function onCardClick(v: any) {
   if (selectMode.value) {
     if (selected.has(v.id)) selected.delete(v.id)
@@ -219,7 +266,8 @@ async function loadVideos(append = false) {
       limit: PAGE,
       offset: append ? videos.value.length : 0,
     }
-    if (dirId.value !== null) params.dir_id = dirId.value
+    if (groupId.value !== null) params.group_id = groupId.value
+    else if (dirId.value !== null) params.dir_id = dirId.value
     const data = await localAPI.videos(params)
     videos.value = append ? [...videos.value, ...data.items] : data.items
     total.value = data.total
@@ -245,8 +293,8 @@ async function pollScan() {
     wasScanning.value = s.scanning
     if (was && !s.scanning) {
       loadVideos()
-      localAPI.dirs().then((d) => { dirs.value = d }).catch(() => {})
-      localAPI.stats().then((st) => { if (st) totalVideos.value = st.video_count }).catch(() => {})
+      localAPI.dirs().then((d) => { dirs.value = d; ensureActiveTab() }).catch(() => {})
+      localAPI.groups().then((g) => { groups.value = g; ensureActiveTab() }).catch(() => {})
     }
   } catch { /* ignore */ }
 }
@@ -255,17 +303,14 @@ watch(keyword, () => {
   clearTimeout(searchTimer)
   searchTimer = window.setTimeout(() => loadVideos(), 350)
 })
-watch([sort, order, dirId], () => loadVideos())
+watch([sort, order, dirId, groupId], () => loadVideos())
 
 let pollTimer: number | undefined
 onMounted(async () => {
   dirs.value = await localAPI.dirs().catch(() => [])
-  localAPI.stats().then((s) => { if (s) totalVideos.value = s.video_count }).catch(() => {})
-  if (dirId.value === null && dirs.value.length > 0) {
-    dirId.value = dirs.value[0].id
-  } else {
-    loadVideos()
-  }
+  groups.value = await localAPI.groups().catch(() => [])
+  ensureActiveTab()
+  if (dirId.value === null && groupId.value === null) loadVideos()
   localAPI.scanAll().catch(() => {})
   pollScan()
   pollTimer = window.setInterval(pollScan, 2000)
@@ -300,6 +345,7 @@ onUnmounted(() => {
 .chip { flex-shrink: 0; padding: 6px 16px; border: 1px solid rgba(255,255,255,0.15); border-radius: 20px; background: rgba(255,255,255,0.06); color: #ccc; font-size: 13px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
 .chip:hover { border-color: var(--n-primary-color); color: #fff; background: rgba(0,170,238,0.1); }
 .chip.active { background: var(--n-primary-color); border-color: var(--n-primary-color); color: #fff; font-weight: 600; }
+.chip-group { border-style: dashed; }
 .list-meta { font-size: 13px; color: var(--n-text-color-3); padding: 2px 2px 10px; }
 .scan-progress { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
 .scan-progress .n-progress { flex: 1; }

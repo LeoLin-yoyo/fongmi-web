@@ -33,6 +33,18 @@ CREATE TABLE IF NOT EXISTS videos (
 
 CREATE INDEX IF NOT EXISTS idx_videos_dir ON videos(dir_path);
 CREATE INDEX IF NOT EXISTS idx_videos_name ON videos(name);
+
+CREATE TABLE IF NOT EXISTS dir_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS dir_group_items (
+    group_id INTEGER NOT NULL,
+    dir_id INTEGER NOT NULL,
+    PRIMARY KEY (group_id, dir_id)
+);
 """
 
 
@@ -97,6 +109,7 @@ class Database:
             if not row:
                 return False
             conn.execute("DELETE FROM videos WHERE dir_path = ?", (row["path"],))
+            conn.execute("DELETE FROM dir_group_items WHERE dir_id = ?", (dir_id,))
             conn.execute("DELETE FROM dirs WHERE id = ?", (dir_id,))
         return True
 
@@ -109,6 +122,78 @@ class Database:
             for idx, dir_id in enumerate(ordered_ids):
                 conn.execute("UPDATE dirs SET sort_order = ? WHERE id = ?", (idx, dir_id))
         return True
+
+    # ---- 聚合选项卡（目录组） ----
+
+    def _valid_dir_ids(self, conn: sqlite3.Connection, dir_ids: list[int]) -> bool:
+        if not dir_ids:
+            return False
+        marks = ",".join("?" for _ in dir_ids)
+        rows = conn.execute(f"SELECT id FROM dirs WHERE id IN ({marks})", dir_ids).fetchall()
+        return len(rows) == len(set(dir_ids))
+
+    def _set_group_items(self, conn: sqlite3.Connection, group_id: int, dir_ids: list[int]) -> None:
+        conn.execute("DELETE FROM dir_group_items WHERE group_id = ?", (group_id,))
+        conn.executemany(
+            "INSERT OR IGNORE INTO dir_group_items (group_id, dir_id) VALUES (?, ?)",
+            [(group_id, d) for d in dict.fromkeys(dir_ids)],
+        )
+
+    def list_groups(self) -> list[dict]:
+        with self._lock, self._connect() as conn:
+            groups = conn.execute("SELECT * FROM dir_groups ORDER BY id").fetchall()
+            items = conn.execute("SELECT group_id, dir_id FROM dir_group_items").fetchall()
+        by_group: dict[int, list[int]] = {}
+        for it in items:
+            by_group.setdefault(it["group_id"], []).append(it["dir_id"])
+        return [{**dict(g), "dir_ids": by_group.get(g["id"], [])} for g in groups]
+
+    def create_group(self, name: str, dir_ids: list[int]) -> dict | None:
+        name = name.strip()
+        with self._lock, self._connect() as conn:
+            if not name or not self._valid_dir_ids(conn, dir_ids):
+                return None
+            cur = conn.execute("INSERT INTO dir_groups (name) VALUES (?)", (name,))
+            group_id = cur.lastrowid
+            self._set_group_items(conn, group_id, dir_ids)
+        return self.get_group(group_id)
+
+    def update_group(self, group_id: int, name: str, dir_ids: list[int]) -> dict | None:
+        name = name.strip()
+        with self._lock, self._connect() as conn:
+            if not conn.execute("SELECT id FROM dir_groups WHERE id = ?", (group_id,)).fetchone():
+                return None
+            if not name or not self._valid_dir_ids(conn, dir_ids):
+                return None
+            conn.execute("UPDATE dir_groups SET name = ? WHERE id = ?", (name, group_id))
+            self._set_group_items(conn, group_id, dir_ids)
+        return self.get_group(group_id)
+
+    def delete_group(self, group_id: int) -> bool:
+        with self._lock, self._connect() as conn:
+            cur = conn.execute("DELETE FROM dir_groups WHERE id = ?", (group_id,))
+            conn.execute("DELETE FROM dir_group_items WHERE group_id = ?", (group_id,))
+        return cur.rowcount > 0
+
+    def get_group(self, group_id: int) -> dict | None:
+        with self._lock, self._connect() as conn:
+            row = conn.execute("SELECT * FROM dir_groups WHERE id = ?", (group_id,)).fetchone()
+            if not row:
+                return None
+            items = conn.execute(
+                "SELECT dir_id FROM dir_group_items WHERE group_id = ? ORDER BY dir_id",
+                (group_id,),
+            ).fetchall()
+        return {**dict(row), "dir_ids": [r["dir_id"] for r in items]}
+
+    def get_group_dir_paths(self, group_id: int) -> list[str]:
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                "SELECT d.path FROM dir_group_items gi JOIN dirs d ON d.id = gi.dir_id "
+                "WHERE gi.group_id = ?",
+                (group_id,),
+            ).fetchall()
+        return [r["path"] for r in rows]
 
     def touch_scan(self, dir_id: int) -> None:
         with self._lock, self._connect() as conn:
@@ -148,6 +233,7 @@ class Database:
         self,
         search: str = "",
         dir_id: int | None = None,
+        group_id: int | None = None,
         sort: str = "name",
         order: str = "asc",
         limit: int = 200,
@@ -161,6 +247,14 @@ class Database:
             sub = self.get_dir(dir_id)
             where.append("v.dir_path = ?")
             params.append(sub["path"] if sub else "__none__")
+        if group_id is not None:
+            paths = self.get_group_dir_paths(group_id)
+            if paths:
+                marks = ",".join("?" for _ in paths)
+                where.append(f"v.dir_path IN ({marks})")
+                params.extend(paths)
+            else:
+                where.append("0 = 1")
         sql = "SELECT * FROM videos v"
         if where:
             sql += " WHERE " + " AND ".join(where)
@@ -172,7 +266,7 @@ class Database:
             rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
-    def count_videos(self, search: str = "", dir_id: int | None = None) -> int:
+    def count_videos(self, search: str = "", dir_id: int | None = None, group_id: int | None = None) -> int:
         where, params = [], []
         if search:
             where.append("name LIKE ?")
@@ -181,6 +275,14 @@ class Database:
             sub = self.get_dir(dir_id)
             where.append("dir_path = ?")
             params.append(sub["path"] if sub else "__none__")
+        if group_id is not None:
+            paths = self.get_group_dir_paths(group_id)
+            if paths:
+                marks = ",".join("?" for _ in paths)
+                where.append(f"dir_path IN ({marks})")
+                params.extend(paths)
+            else:
+                where.append("0 = 1")
         sql = "SELECT COUNT(*) AS c FROM videos"
         if where:
             sql += " WHERE " + " AND ".join(where)

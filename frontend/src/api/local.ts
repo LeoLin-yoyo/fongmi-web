@@ -12,6 +12,10 @@ export const localAPI = {
   video: (id: number | string) => request.get(`/local/videos/${id}`),
   deleteVideos: (ids: number[]) => request.delete(`/local/videos?ids=${ids.join(',')}`),
   stats: () => request.get('/local/stats') as unknown as Promise<{ video_count: number; dir_count: number; total_size: number }>,
+  groups: () => request.get('/local/groups') as unknown as Promise<any[]>,
+  createGroup: (name: string, dirIds: number[]) => request.post('/local/groups', { name, dir_ids: dirIds }),
+  updateGroup: (id: number, name: string, dirIds: number[]) => request.put(`/local/groups/${id}`, { name, dir_ids: dirIds }),
+  deleteGroup: (id: number) => request.delete(`/local/groups/${id}`),
   streamUrl: (id: number | string) => `/api/local/videos/${id}/stream`,
   thumbUrl: (id: number | string) => `/api/local/videos/${id}/thumb`,
 }

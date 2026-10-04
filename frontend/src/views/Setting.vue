@@ -164,6 +164,30 @@
             </div>
           </div>
           <p v-if="dirs.length > 1" class="hint">用 ↑↓ 调整目录顺序，片库页的目录筛选条将按此顺序排列。</p>
+          <div class="group-section">
+            <div class="group-title">聚合选项卡<span class="group-hint">把多个目录合并成一个选项卡在片库页展示（至少选 2 个目录）</span></div>
+            <div class="group-form">
+              <n-input v-model:value="groupName" placeholder="聚合选项卡名称，例如：电影" @keyup.enter="saveGroup" />
+              <n-select v-model:value="groupDirIds" multiple clearable :options="dirOptions" placeholder="选择要合并的目录（至少 2 个）" />
+              <div class="group-actions">
+                <n-button type="primary" size="small" :disabled="!canSaveGroup" :loading="savingGroup" @click="saveGroup">
+                  {{ editingGroupId ? '保存修改' : '创建聚合选项卡' }}
+                </n-button>
+                <n-button v-if="editingGroupId" size="small" @click="cancelEditGroup">取消</n-button>
+              </div>
+            </div>
+            <div v-if="!groups.length" class="no-group">尚未创建聚合选项卡</div>
+            <div v-for="g in groups" :key="g.id" class="dir-item">
+              <div class="dir-info">
+                <div class="dir-path" :title="groupDirsLabel(g)">{{ g.name }}</div>
+                <div class="dir-meta">{{ groupDirsLabel(g) }}</div>
+              </div>
+              <div class="dir-actions">
+                <n-button size="small" @click="startEditGroup(g)">编辑</n-button>
+                <n-button size="small" type="error" ghost @click="removeGroup(g)">删除</n-button>
+              </div>
+            </div>
+          </div>
         </n-space>
       </n-card>
     </div>
@@ -171,8 +195,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
-import { useMessage, NCard, NTabs, NTabPane, NInput, NButton, NUpload, NUploadDragger, NText, NTag, NSpace, NSwitch } from 'naive-ui'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useMessage, NCard, NTabs, NTabPane, NInput, NButton, NUpload, NUploadDragger, NText, NTag, NSpace, NSwitch, NSelect } from 'naive-ui'
 import { importConfig, importBatch, getConfigs, deleteConfig, toggleConfig, checkBatch, importLiveBatch, getLiveSources, deleteLiveSource, toggleLiveSource, renameConfig } from '@/api/config'
 import { localAPI } from '@/api/local'
 import { playOpenPrefs } from '@/utils/playPrefs'
@@ -194,7 +218,15 @@ const stats = ref<any>({})
 const newDir = ref('')
 const adding = ref(false)
 const scanning = ref(false)
+const groups = ref<any[]>([])
+const groupName = ref('')
+const groupDirIds = ref<number[]>([])
+const editingGroupId = ref<number | null>(null)
+const savingGroup = ref(false)
 let pollTimer: number | undefined
+
+const dirOptions = computed(() => dirs.value.map(d => ({ label: d.path, value: d.id })))
+const canSaveGroup = computed(() => !!groupName.value.trim() && groupDirIds.value.length >= 2)
 
 function formatSize(bytes: number) {
   if (bytes === null || bytes === undefined) return '–'
@@ -259,6 +291,58 @@ async function moveDir(idx: number, delta: number) {
   }
 }
 
+async function refreshGroups() {
+  groups.value = await localAPI.groups().catch(() => groups.value)
+}
+
+function groupDirsLabel(g: any) {
+  return (g.dir_ids || []).map((id: number) => dirs.value.find(d => d.id === id)?.path || `#${id}`).join(' + ')
+}
+
+function startEditGroup(g: any) {
+  editingGroupId.value = g.id
+  groupName.value = g.name
+  groupDirIds.value = [...g.dir_ids]
+}
+
+function cancelEditGroup() {
+  editingGroupId.value = null
+  groupName.value = ''
+  groupDirIds.value = []
+}
+
+async function saveGroup() {
+  if (!canSaveGroup.value) return
+  savingGroup.value = true
+  try {
+    if (editingGroupId.value) {
+      await localAPI.updateGroup(editingGroupId.value, groupName.value.trim(), [...groupDirIds.value])
+      message.success('聚合选项卡已保存')
+    } else {
+      await localAPI.createGroup(groupName.value.trim(), [...groupDirIds.value])
+      message.success('聚合选项卡已创建')
+    }
+    cancelEditGroup()
+    await refreshGroups()
+  } catch (e: any) {
+    message.error(`保存失败：${e?.response?.data?.detail || e.message}`)
+  } finally {
+    savingGroup.value = false
+  }
+}
+
+async function removeGroup(g: any) {
+  if (!confirm(`删除聚合选项卡「${g.name}」？（不影响目录和视频）`)) return
+  if (editingGroupId.value === g.id) cancelEditGroup()
+  try {
+    await localAPI.deleteGroup(g.id)
+    message.success('已删除')
+    await refreshGroups()
+  } catch (e: any) {
+    message.error(`删除失败：${e.message}`)
+  }
+}
+
 async function scanDir(d: any) {
   try {
     await localAPI.scanDir(d.id)
@@ -282,6 +366,7 @@ onMounted(async () => {
   await loadConfigs()
   await loadLiveSources()
   await refreshLocal()
+  refreshGroups()
   pollLocalStatus()
   pollTimer = window.setInterval(async () => {
     await pollLocalStatus()
@@ -477,6 +562,12 @@ async function removeLive(id: number) {
 .dir-path { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dir-meta { font-size: 12px; color: #888; margin-top: 4px; display: flex; gap: 10px; flex-wrap: wrap; }
 .dir-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.group-section { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--n-divider-color); }
+.group-title { font-weight: 600; font-size: 14px; margin-bottom: 10px; }
+.group-hint { font-size: 12px; color: #888; font-weight: 400; margin-left: 8px; }
+.group-form { display: flex; flex-direction: column; gap: 8px; }
+.group-actions { display: flex; gap: 8px; }
+.no-group { text-align: center; padding: 16px; color: #888; font-size: 13px; }
 .pref-item { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--n-divider-color); }
 .pref-item:last-child { border-bottom: none; }
 .pref-info { flex: 1; min-width: 0; }

@@ -59,6 +59,57 @@ def delete_dir(dir_id: int):
     return {"ok": True}
 
 
+@router.get("/groups")
+def list_groups():
+    return _get_db().list_groups()
+
+
+def _check_group_body(db: Database, body: dict) -> tuple[str, list[int]]:
+    name = (body.get("name") or "").strip()
+    dir_ids = body.get("dir_ids")
+    if not name:
+        raise HTTPException(400, "名称不能为空")
+    if (
+        not isinstance(dir_ids, list)
+        or len(dir_ids) < 2
+        or not all(isinstance(i, int) for i in dir_ids)
+    ):
+        raise HTTPException(400, "请至少选择 2 个目录")
+    if len(set(dir_ids)) != len(dir_ids):
+        raise HTTPException(400, "目录不能重复")
+    for d in dir_ids:
+        if not db.get_dir(d):
+            raise HTTPException(400, f"目录不存在: {d}")
+    return name, dir_ids
+
+
+@router.post("/groups")
+def create_group(body: dict):
+    db = _get_db()
+    name, dir_ids = _check_group_body(db, body)
+    row = db.create_group(name, dir_ids)
+    if row is None:
+        raise HTTPException(500, "创建聚合选项卡失败")
+    return row
+
+
+@router.put("/groups/{group_id}")
+def update_group(group_id: int, body: dict):
+    db = _get_db()
+    name, dir_ids = _check_group_body(db, body)
+    row = db.update_group(group_id, name, dir_ids)
+    if row is None:
+        raise HTTPException(404, "聚合选项卡不存在")
+    return row
+
+
+@router.delete("/groups/{group_id}")
+def delete_group(group_id: int):
+    if not _get_db().delete_group(group_id):
+        raise HTTPException(404, "聚合选项卡不存在")
+    return {"ok": True}
+
+
 @router.post("/dirs/{dir_id}/scan")
 def scan_dir(dir_id: int, background: BackgroundTasks):
     db = _get_db()
@@ -84,14 +135,17 @@ def scan_status():
 def list_videos(
     search: str = "",
     dir_id: int | None = None,
+    group_id: int | None = None,
     sort: str = Query("mtime", pattern="^(name|size|duration|created|mtime)$"),
     order: str = Query("desc", pattern="^(asc|desc)$"),
     limit: int = Query(200, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ):
+    if dir_id is not None and group_id is not None:
+        raise HTTPException(400, "dir_id 与 group_id 不能同时使用")
     db = _get_db()
-    videos = db.list_videos(search=search, dir_id=dir_id, sort=sort, order=order, limit=limit, offset=offset)
-    total = db.count_videos(search=search, dir_id=dir_id)
+    videos = db.list_videos(search=search, dir_id=dir_id, group_id=group_id, sort=sort, order=order, limit=limit, offset=offset)
+    total = db.count_videos(search=search, dir_id=dir_id, group_id=group_id)
     return {"items": videos, "total": total, "limit": limit, "offset": offset}
 
 
