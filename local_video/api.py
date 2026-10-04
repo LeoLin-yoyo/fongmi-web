@@ -52,6 +52,18 @@ def reorder_dirs(body: dict):
     return {"ok": True, "dirs": _get_db().list_dirs()}
 
 
+@router.patch("/dirs/{dir_id}/visible")
+def set_dir_visible(dir_id: int, body: dict):
+    """切换目录在片库页选项卡中的显示；隐藏不影响扫描与聚合。"""
+    visible = body.get("visible")
+    if not isinstance(visible, bool):
+        raise HTTPException(400, "visible 必须为布尔值")
+    row = _get_db().set_dir_visible(dir_id, visible)
+    if row is None:
+        raise HTTPException(404, "目录不存在")
+    return row
+
+
 @router.delete("/dirs/{dir_id}")
 def delete_dir(dir_id: int):
     if not _get_db().delete_dir(dir_id):

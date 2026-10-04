@@ -4,6 +4,7 @@ export const localAPI = {
   dirs: () => request.get('/local/dirs') as unknown as Promise<any[]>,
   addDir: (path: string) => request.post('/local/dirs', { path }),
   deleteDir: (id: number) => request.delete(`/local/dirs/${id}`),
+  setDirVisible: (id: number, visible: boolean) => request.patch(`/local/dirs/${id}/visible`, { visible }),
   reorderDirs: (ids: number[]) => request.put('/local/dirs/order', { ids }),
   scanDir: (id: number) => request.post(`/local/dirs/${id}/scan`),
   scanAll: () => request.post('/local/scan'),

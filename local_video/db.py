@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS dirs (
     path TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
     sort_order INTEGER NOT NULL DEFAULT 0,
+    visible INTEGER NOT NULL DEFAULT 1,
     added_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     last_scan TEXT
 );
@@ -59,10 +60,12 @@ class Database:
 
     @staticmethod
     def _migrate(conn: sqlite3.Connection) -> None:
-        """旧库升级：dirs 表补 sort_order 列（存量行全为 0，仍按 id 序）。"""
+        """旧库升级：dirs 表补 sort_order / visible 列。"""
         cols = {r[1] for r in conn.execute("PRAGMA table_info(dirs)").fetchall()}
         if "sort_order" not in cols:
             conn.execute("ALTER TABLE dirs ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+        if "visible" not in cols:
+            conn.execute("ALTER TABLE dirs ADD COLUMN visible INTEGER NOT NULL DEFAULT 1")
 
     @contextmanager
     def _connect(self):
@@ -122,6 +125,16 @@ class Database:
             for idx, dir_id in enumerate(ordered_ids):
                 conn.execute("UPDATE dirs SET sort_order = ? WHERE id = ?", (idx, dir_id))
         return True
+
+    def set_dir_visible(self, dir_id: int, visible: bool) -> dict | None:
+        """设置目录是否在片库页选项卡中显示（不影响扫描与聚合）。"""
+        with self._lock, self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE dirs SET visible = ? WHERE id = ?", (1 if visible else 0, dir_id)
+            )
+            if cur.rowcount == 0:
+                return None
+        return self.get_dir(dir_id)
 
     # ---- 聚合选项卡（目录组） ----
 

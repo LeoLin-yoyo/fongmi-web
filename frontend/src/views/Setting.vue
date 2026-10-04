@@ -147,23 +147,33 @@
             <n-button type="primary" :loading="adding" :disabled="!newDir.trim()" @click="addDir">添加目录</n-button>
           </div>
           <div v-if="!dirs.length" class="no-config">尚未添加任何目录</div>
-          <div v-for="(d, idx) in dirs" :key="d.id" class="dir-item">
+          <div v-for="(d, idx) in dirs" :key="d.id" class="dir-item" :class="{ 'dir-hidden': !isDirVisible(d) }">
             <div class="dir-info">
               <div class="dir-path" :title="d.path">{{ d.path }}</div>
               <div class="dir-meta">
                 <span>{{ d.video_count }} 个视频</span>
                 <span v-if="d.last_scan">上次扫描：{{ d.last_scan }}</span>
                 <span v-else>尚未扫描</span>
+                <span v-if="!isDirVisible(d)" class="dir-off-tag">片库页隐藏</span>
               </div>
             </div>
             <div class="dir-actions">
+              <n-switch
+                size="small"
+                :value="isDirVisible(d)"
+                :loading="visibilitySaving.has(d.id)"
+                @update:value="(v: boolean) => toggleDirVisible(d, v)"
+              >
+                <template #checked>显示</template>
+                <template #unchecked>隐藏</template>
+              </n-switch>
               <n-button size="small" quaternary circle :disabled="idx === 0" title="上移" aria-label="上移" @click="moveDir(idx, -1)">↑</n-button>
               <n-button size="small" quaternary circle :disabled="idx === dirs.length - 1" title="下移" aria-label="下移" @click="moveDir(idx, 1)">↓</n-button>
               <n-button size="small" :loading="scanning" @click="scanDir(d)">扫描</n-button>
               <n-button size="small" type="error" ghost @click="removeDir(d)">删除</n-button>
             </div>
           </div>
-          <p v-if="dirs.length > 1" class="hint">用 ↑↓ 调整目录顺序，片库页的目录筛选条将按此顺序排列。</p>
+          <p v-if="dirs.length > 1" class="hint">用 ↑↓ 调整目录顺序；「隐藏」的目录不在片库页选项卡中显示，但仍会扫描并参与聚合选项卡。</p>
           <div class="group-section">
             <div class="group-title">聚合选项卡<span class="group-hint">把多个目录合并成一个选项卡在片库页展示（至少选 2 个目录）</span></div>
             <div class="group-form">
@@ -195,7 +205,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, reactive, onMounted, onUnmounted } from 'vue'
 import { useMessage, NCard, NTabs, NTabPane, NInput, NButton, NUpload, NUploadDragger, NText, NTag, NSpace, NSwitch, NSelect } from 'naive-ui'
 import { importConfig, importBatch, getConfigs, deleteConfig, toggleConfig, checkBatch, importLiveBatch, getLiveSources, deleteLiveSource, toggleLiveSource, renameConfig } from '@/api/config'
 import { localAPI } from '@/api/local'
@@ -223,6 +233,7 @@ const groupName = ref('')
 const groupDirIds = ref<number[]>([])
 const editingGroupId = ref<number | null>(null)
 const savingGroup = ref(false)
+const visibilitySaving = reactive(new Set<number>())
 let pollTimer: number | undefined
 
 const dirOptions = computed(() => dirs.value.map(d => ({ label: d.path, value: d.id })))
@@ -246,6 +257,24 @@ function shortUrl(u: string) {
 async function refreshLocal() {
   dirs.value = await localAPI.dirs().catch(() => [])
   stats.value = await localAPI.stats().catch(() => ({}))
+}
+
+function isDirVisible(d: any) {
+  return d.visible === undefined ? true : !!d.visible
+}
+
+async function toggleDirVisible(d: any, visible: boolean) {
+  visibilitySaving.add(d.id)
+  const prev = d.visible
+  d.visible = visible ? 1 : 0
+  try {
+    await localAPI.setDirVisible(d.id, visible)
+  } catch (e: any) {
+    d.visible = prev
+    message.error(`设置失败：${e?.response?.data?.detail || e.message}`)
+  } finally {
+    visibilitySaving.delete(d.id)
+  }
 }
 
 async function addDir() {
@@ -561,7 +590,9 @@ async function removeLive(id: number) {
 .dir-info { flex: 1; min-width: 0; }
 .dir-path { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dir-meta { font-size: 12px; color: #888; margin-top: 4px; display: flex; gap: 10px; flex-wrap: wrap; }
-.dir-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.dir-actions { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
+.dir-hidden .dir-path { opacity: 0.55; }
+.dir-off-tag { color: #e6a23c; }
 .group-section { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--n-divider-color); }
 .group-title { font-weight: 600; font-size: 14px; margin-bottom: 10px; }
 .group-hint { font-size: 12px; color: #888; font-weight: 400; margin-left: 8px; }

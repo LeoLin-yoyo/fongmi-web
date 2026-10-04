@@ -30,7 +30,7 @@
       <n-select v-model:value="order" class="order-select" :options="orderOptions" />
     </div>
 
-    <div v-if="dirs.length > 1 || groups.length" class="chip-row">
+    <div v-if="visibleDirs.length > 1 || groups.length" class="chip-row">
       <button
         v-for="g in groups"
         :key="'g' + g.id"
@@ -42,7 +42,7 @@
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:3px"><rect x="3" y="3" width="12" height="12" rx="2"/><rect x="9" y="9" width="12" height="12" rx="2"/></svg>{{ g.name }}
       </button>
       <button
-        v-for="d in dirs"
+        v-for="d in visibleDirs"
         :key="d.id"
         class="chip"
         :class="{ active: dirId === d.id }"
@@ -197,6 +197,9 @@ function dirNameOf(id: number) {
   return dirs.value.find(d => d.id === id)?.name || `#${id}`
 }
 
+/** 片库页选项卡只展示可见目录；隐藏目录仍参与扫描与聚合选项卡 */
+const visibleDirs = computed(() => dirs.value.filter(d => d.visible === undefined || !!d.visible))
+
 function groupDirsLabel(g: any) {
   return (g.dir_ids || []).map(dirNameOf).join(' + ')
 }
@@ -213,15 +216,15 @@ function selectGroup(id: number) {
   dirId.value = null
 }
 
-/** 校正当前选项卡：组/目录被删后回退到第一个可用选项卡 */
+/** 校正当前选项卡：组/目录被删或目录被隐藏后，回退到第一个可用选项卡 */
 function ensureActiveTab() {
   if (groupId.value !== null && groups.value.some(g => g.id === groupId.value)) return
-  if (dirId.value !== null && dirs.value.some(d => d.id === dirId.value)) return
+  if (dirId.value !== null && visibleDirs.value.some(d => d.id === dirId.value)) return
   if (groups.value.length) {
     groupId.value = groups.value[0].id
     dirId.value = null
-  } else if (dirs.value.length) {
-    dirId.value = dirs.value[0].id
+  } else if (visibleDirs.value.length) {
+    dirId.value = visibleDirs.value[0].id
     groupId.value = null
   } else {
     dirId.value = null

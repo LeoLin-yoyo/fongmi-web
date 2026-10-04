@@ -294,3 +294,76 @@ def test_delete_videos_missing_file(client, tmp_path, sample_video):
     data = r.json()
     assert data["deleted"] == 0 and data["missing"] == 1
     assert app_state.db.get_video(vid["id"]) is None
+
+
+def test_dir_visible_toggle(client, tmp_path):
+    """目录可隐藏/显示；隐藏不影响扫描、视频查询与聚合。"""
+    lib = tmp_path / "vis_lib"
+    lib.mkdir()
+    app_state.db.add_dir(str(lib))
+    dirs = client.get("/api/local/dirs").json()
+    d = dirs[0]
+    assert d["visible"] == 1  # 默认可见
+
+    # 参数校验与 404
+    assert client.patch(f"/api/local/dirs/{d['id']}/visible", json={"visible": "yes"}).status_code == 400
+    assert client.patch("/api/local/dirs/99999/visible", json={"visible": False}).status_code == 404
+
+    # 隐藏
+    r = client.patch(f"/api/local/dirs/{d['id']}/visible", json={"visible": False})
+    assert r.status_code == 200 and r.json()["visible"] == 0
+    assert client.get("/api/local/dirs").json()[0]["visible"] == 0
+
+    # 隐藏后视频仍可查询、目录仍可扫描
+    assert client.get("/api/local/videos", params={"dir_id": d["id"]}).json()["total"] == 1
+    assert client.post(f"/api/local/dirs/{d['id']}/scan").status_code == 200
+
+    # 恢复显示
+    r = client.patch(f"/api/local/dirs/{d['id']}/visible", json={"visible": True})
+    assert r.status_code == 200 and r.json()["visible"] == 1
+
+
+def test_hidden_dir_still_aggregatable(client, tmp_path):
+    """隐藏目录仍可被聚合选项卡包含，且组内视频照常合并返回。"""
+    db = app_state.db
+    a_dir = tmp_path / "hid_a"
+    b_dir = tmp_path / "hid_b"
+    a_dir.mkdir()
+    b_dir.mkdir()
+    a = db.add_dir(str(a_dir))
+    b = db.add_dir(str(b_dir))
+    db.set_dir_visible(a["id"], False)
+
+    g = db.create_group("含隐藏", [a["id"], b["id"]])
+    assert g is not None
+    # 组内包含隐藏目录，查询仍正常（无视频时为空集，不报错）
+    r = client.get("/api/local/videos", params={"group_id": g["id"]})
+    assert r.status_code == 200 and r.json()["total"] == 0
+
+
+def test_migrate_old_dirs_schema_adds_visible(tmp_path):
+    """旧库（无 visible 列）迁移后 visible 默认 1。"""
+    import sqlite3
+
+    db_path = tmp_path / "old_vis.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE dirs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT UNIQUE NOT NULL,
+            name TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            added_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+            last_scan TEXT
+        );
+        INSERT INTO dirs (path, name) VALUES ('C:\\v1', 'v1');
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    db = Database(str(db_path))
+    rows = db.list_dirs()
+    assert rows[0]["visible"] == 1
+    assert db.set_dir_visible(rows[0]["id"], False)["visible"] == 0
