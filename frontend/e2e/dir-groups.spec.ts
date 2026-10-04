@@ -8,12 +8,10 @@ test.beforeEach(async ({ page }) => {
 })
 
 test('聚合选项卡全流程：创建→片库合并展示→编辑→删除', async ({ page }) => {
-  // 前置：清掉可能残留的同名组，避免断言命中多个
+  // 前置：清空所有聚合组，从干净状态出发（片库页默认选中首个组）
   const existing = await (await page.request.get('/api/local/groups')).json()
   for (const g of existing) {
-    if (String(g.name).startsWith('E2E聚合')) {
-      await page.request.delete(`/api/local/groups/${g.id}`)
-    }
+    await page.request.delete(`/api/local/groups/${g.id}`)
   }
 
   // ── 设置页：创建聚合选项卡（前两个目录） ──
@@ -22,7 +20,9 @@ test('聚合选项卡全流程：创建→片库合并展示→编辑→删除',
   const dirs = await (await page.request.get('/api/local/dirs')).json()
   test.skip(dirs.length < 2, '需要至少两个目录')
   const expectedMerged = dirs[0].video_count + dirs[1].video_count
+  let createdId: number | null = null
 
+  try {
   await page.locator('.group-section .n-input input').fill('E2E聚合')
   const select = page.locator('.group-section .n-select')
   await select.click()
@@ -31,6 +31,7 @@ test('聚合选项卡全流程：创建→片库合并展示→编辑→删除',
   await page.keyboard.press('Escape')
   await page.locator('.group-actions button', { hasText: '创建聚合选项卡' }).click()
   await expect(page.locator('.group-section .group-item .dir-path', { hasText: 'E2E聚合' })).toBeVisible()
+  createdId = ((await (await page.request.get('/api/local/groups')).json())[0] || {}).id ?? null
 
   // ── 片库页：聚合 tab 默认选中且合并两目录视频 ──
   await page.goto('/local')
@@ -57,4 +58,14 @@ test('聚合选项卡全流程：创建→片库合并展示→编辑→删除',
   page.on('dialog', (d) => d.accept())
   await page.locator('.group-section .group-item', { hasText: 'E2E聚合改' }).locator('button', { hasText: '删除' }).click()
   await expect(page.locator('.group-section .no-group')).toBeVisible()
+  createdId = null
+  } finally {
+    // 兜底：清理用例可能遗留的聚合组，避免污染真实数据与后续用例
+    if (createdId !== null) {
+      await page.request.delete(`/api/local/groups/${createdId}`).catch(() => {})
+    }
+    for (const g of await (await page.request.get('/api/local/groups')).json()) {
+      if (String(g.name).startsWith('E2E聚合')) await page.request.delete(`/api/local/groups/${g.id}`)
+    }
+  }
 })

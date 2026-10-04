@@ -11,7 +11,7 @@
       <n-button size="small" :type="selectMode ? 'error' : 'default'" @click="toggleSelectMode">
         {{ selectMode ? '完成' : '管理' }}
       </n-button>
-      <n-button size="small" :loading="scanning" @click="triggerScan">扫描</n-button>
+      <n-button size="small" :loading="scanBusy || scanning" @click="triggerScan">扫描</n-button>
     </div>
 
     <div class="toolbar">
@@ -142,6 +142,7 @@ const dirs = ref<any[]>([])
 const groups = ref<any[]>([])
 const scanStatus = ref({ scanning: false, done: 0, total: 0 })
 const wasScanning = ref(false)
+const scanBusy = ref(false)
 const sentinel = ref<HTMLElement | null>(null)
 const selectMode = ref(false)
 const selected = reactive(new Set<number>())
@@ -285,7 +286,45 @@ async function loadVideos(append = false) {
 function loadMore() { loadVideos(true) }
 
 function triggerScan() {
-  localAPI.scanAll().catch(() => {})
+  if (scanBusy.value) return
+  scanBusy.value = true
+  message.info('开始扫描…')
+  // POST 返回后后台任务才开始执行，故随后自行轮询状态直到结束（兜底 60s）
+  localAPI.scanAll()
+    .then(() => waitScanDone(Date.now()))
+    .catch((e: any) => {
+      scanBusy.value = false
+      message.error(`扫描失败：${e?.response?.data?.detail || e?.message || '未知错误'}`)
+    })
+}
+
+function waitScanDone(startedAt: number, sawScanning = false) {
+  const tick = async () => {
+    const elapsed = Date.now() - startedAt
+    const s = await localAPI.scanStatus().catch(() => null)
+    if (s) {
+      scanStatus.value = s
+      if (s.scanning) sawScanning = true
+    }
+    // 结束判定：必须曾观察到「扫描中」再变空闲（POST 用 BackgroundTasks，
+    // 响应后才真正开扫，避免开扫前误判）；或无新文件时超过宽限期直接收尾
+    const finished = sawScanning && s && !s.scanning
+    if (finished || elapsed > 60000 || (!sawScanning && elapsed > 3000)) {
+      scanBusy.value = false
+      refreshAfterScan()
+      message.success('扫描完成')
+      return
+    }
+    setTimeout(tick, 300)
+  }
+  setTimeout(tick, 300)
+}
+
+/** 扫描结束后刷新视频列表、目录/分组与统计 */
+function refreshAfterScan() {
+  loadVideos()
+  localAPI.dirs().then((d) => { dirs.value = d; ensureActiveTab() }).catch(() => {})
+  localAPI.groups().then((g) => { groups.value = g; ensureActiveTab() }).catch(() => {})
 }
 
 async function pollScan() {
@@ -295,9 +334,7 @@ async function pollScan() {
     scanStatus.value = s
     wasScanning.value = s.scanning
     if (was && !s.scanning) {
-      loadVideos()
-      localAPI.dirs().then((d) => { dirs.value = d; ensureActiveTab() }).catch(() => {})
-      localAPI.groups().then((g) => { groups.value = g; ensureActiveTab() }).catch(() => {})
+      refreshAfterScan()
     }
   } catch { /* ignore */ }
 }

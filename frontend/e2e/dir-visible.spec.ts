@@ -8,11 +8,13 @@ test.beforeEach(async ({ page }) => {
 })
 
 test('目录显示/隐藏：设置页开关 → 片库页选项卡增减 → 恢复', async ({ page }) => {
+  // 前置：所有目录置为可见，用例从已知状态出发（片库页 chip 数 = 目录总数）
   const dirs = await (await page.request.get('/api/local/dirs')).json()
   test.skip(dirs.length < 2, '需要至少两个目录')
+  for (const d of dirs) {
+    if (!d.visible) await page.request.patch(`/api/local/dirs/${d.id}/visible`, { data: { visible: true } })
+  }
   const target = dirs[1]
-  // 前置：确保目标目录处于显示态，用例不依赖残留状态
-  await page.request.patch(`/api/local/dirs/${target.id}/visible`, { data: { visible: true } })
 
   // ── 设置页：隐藏第二个目录 ──
   await page.goto('/setting')
