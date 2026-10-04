@@ -110,7 +110,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useMessage, NButton, NInput, NSelect, NSkeleton, NProgress, NEmpty, NSpin } from 'naive-ui'
 import { localAPI } from '@/api/local'
-import { openInNewTab } from '@/utils/navigation'
+import { openPlayPage } from '@/utils/navigation'
 import { formatDuration, formatSize } from '@/utils/format'
 import BackTop from '@/components/BackTop.vue'
 
@@ -187,7 +187,7 @@ function onCardClick(v: any) {
     if (selected.has(v.id)) selected.delete(v.id)
     else selected.add(v.id)
   } else {
-    openInNewTab({ path: `/local/player/${v.id}` })
+    openPlayPage({ path: `/local/player/${v.id}` }, 'local')
   }
 }
 

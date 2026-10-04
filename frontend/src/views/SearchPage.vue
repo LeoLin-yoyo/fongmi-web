@@ -131,7 +131,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NInput, NEmpty, NSpin, NSelect, NButton, NButtonGroup } from 'naive-ui'
 import { imgUrl } from '@/api/img'
-import { openInNewTab } from '@/utils/navigation'
+import { openPlayPage } from '@/utils/navigation'
 
 const route = useRoute()
 const router = useRouter()
@@ -292,7 +292,7 @@ function goDetail(v: any) {
   const siteKey = v._site_key
   const vodId = v.vod_id
   if (siteKey && vodId) {
-    openInNewTab({ path: `/detail/${siteKey}/${vodId}`, query: { autoplay: '1' } })
+    openPlayPage({ path: `/detail/${siteKey}/${vodId}`, query: { autoplay: '1' } }, 'vod')
   }
 }
 </script>

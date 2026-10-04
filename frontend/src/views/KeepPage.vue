@@ -35,7 +35,7 @@ import { ref, onMounted, computed } from 'vue'
 import { NSpin, NEmpty, NButton } from 'naive-ui'
 import { keepAPI, vodAPI } from '@/api/vod'
 import { imgUrl } from '@/api/img'
-import { openInNewTab } from '@/utils/navigation'
+import { openPlayPage } from '@/utils/navigation'
 
 const list = ref<any[]>([])
 const loading = ref(false)
@@ -90,7 +90,7 @@ async function checkAllUpdates() {
 }
 
 function goDetail(item: any) {
-  openInNewTab({ path: `/detail/${item.site_key}/${item.vod_id}`, query: { autoplay: '1' } })
+  openPlayPage({ path: `/detail/${item.site_key}/${item.vod_id}`, query: { autoplay: '1' } }, 'vod')
 }
 </script>
 

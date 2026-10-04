@@ -34,7 +34,7 @@ import { ref, onMounted } from 'vue'
 import { NButton, NSpin, NEmpty } from 'naive-ui'
 import { historyAPI } from '@/api/vod'
 import { imgUrl } from '@/api/img'
-import { openInNewTab } from '@/utils/navigation'
+import { openPlayPage } from '@/utils/navigation'
 
 const list = ref<any[]>([])
 const loading = ref(false)
@@ -58,11 +58,11 @@ function formatTime(t: string) {
 }
 
 function goPlay(item: any) {
-  // 优先进详情页续看（可换源/选集），老数据没有站点信息时回退直连播放；均在新标签页打开
+  // 优先进详情页续看（可换源/选集），老数据没有站点信息时回退直连播放
   if (item.site_key && item.vod_id) {
-    openInNewTab({ path: `/detail/${item.site_key}/${item.vod_id}`, query: { autoplay: '1' } })
+    openPlayPage({ path: `/detail/${item.site_key}/${item.vod_id}`, query: { autoplay: '1' } }, 'vod')
   } else if (item.episode) {
-    openInNewTab({ path: '/play', query: { url: item.episode } })
+    openPlayPage({ path: '/play', query: { url: item.episode } }, 'vod')
   }
 }
 

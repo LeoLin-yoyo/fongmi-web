@@ -228,7 +228,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { NButton, NSelect, NSpin, NSkeleton, NModal } from 'naive-ui'
 import { imgUrl } from '@/api/img'
-import { openInNewTab } from '@/utils/navigation'
+import { openPlayPage } from '@/utils/navigation'
 import BackTop from '@/components/BackTop.vue'
 
 const initLoading = ref(true)
@@ -509,14 +509,14 @@ async function loadMore() {
 }
 
 function goDetail(id: string, siteKey?: string) {
-  openInNewTab({ path: `/detail/${siteKey || selectedSite.value}/${id}`, query: { autoplay: '1' } })
+  openPlayPage({ path: `/detail/${siteKey || selectedSite.value}/${id}`, query: { autoplay: '1' } }, 'vod')
 }
 
 function goContinue(item: any) {
   if (item.site_key && item.vod_id) {
-    openInNewTab({ path: `/detail/${item.site_key}/${item.vod_id}`, query: { autoplay: '1' } })
+    openPlayPage({ path: `/detail/${item.site_key}/${item.vod_id}`, query: { autoplay: '1' } }, 'vod')
   } else if (item.episode) {
-    openInNewTab({ path: '/play', query: { url: item.episode } })
+    openPlayPage({ path: '/play', query: { url: item.episode } }, 'vod')
   }
 }
 

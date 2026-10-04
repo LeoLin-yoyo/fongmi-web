@@ -107,6 +107,25 @@
     </div>
 
     <div class="section">
+      <n-card title="播放设置">
+        <div class="pref-item">
+          <div class="pref-info">
+            <div class="pref-name">点播视频：新标签页播放</div>
+            <div class="pref-desc">开启后点击点播视频在浏览器新标签页打开；关闭则在当前页跳转</div>
+          </div>
+          <n-switch v-model:value="playOpenPrefs.vod" />
+        </div>
+        <div class="pref-item">
+          <div class="pref-info">
+            <div class="pref-name">本地视频：新标签页播放</div>
+            <div class="pref-desc">开启后点击本地视频在浏览器新标签页播放；关闭则在当前页跳转。两项配置互相独立</div>
+          </div>
+          <n-switch v-model:value="playOpenPrefs.local" />
+        </div>
+      </n-card>
+    </div>
+
+    <div class="section">
       <n-card title="本地视频">
         <div class="stats-row">
           <div class="stat-card">
@@ -156,6 +175,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { useMessage, NCard, NTabs, NTabPane, NInput, NButton, NUpload, NUploadDragger, NText, NTag, NSpace, NSwitch } from 'naive-ui'
 import { importConfig, importBatch, getConfigs, deleteConfig, toggleConfig, checkBatch, importLiveBatch, getLiveSources, deleteLiveSource, toggleLiveSource, renameConfig } from '@/api/config'
 import { localAPI } from '@/api/local'
+import { playOpenPrefs } from '@/utils/playPrefs'
 
 const message = useMessage()
 const url = ref('')
@@ -457,6 +477,11 @@ async function removeLive(id: number) {
 .dir-path { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dir-meta { font-size: 12px; color: #888; margin-top: 4px; display: flex; gap: 10px; flex-wrap: wrap; }
 .dir-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.pref-item { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--n-divider-color); }
+.pref-item:last-child { border-bottom: none; }
+.pref-info { flex: 1; min-width: 0; }
+.pref-name { font-size: 14px; font-weight: 500; }
+.pref-desc { font-size: 12px; color: #888; margin-top: 4px; }
 .no-config { text-align: center; padding: 24px; color: #888; font-size: 14px; }
 @media (max-width: 640px) {
   .stats-row { grid-template-columns: repeat(3, 1fr); gap: 8px; }

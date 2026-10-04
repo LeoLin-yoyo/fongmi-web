@@ -28,7 +28,7 @@ import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { NButton, NSpin, NEmpty, NPagination } from 'naive-ui'
 import { imgUrl } from '@/api/img'
-import { openInNewTab } from '@/utils/navigation'
+import { openPlayPage } from '@/utils/navigation'
 
 const route = useRoute()
 const siteKey = ref('')
@@ -60,7 +60,7 @@ async function loadPage(pg: number) {
 }
 
 function goDetail(id: string) {
-  openInNewTab({ path: `/detail/${siteKey.value}/${id}`, query: { autoplay: '1' } })
+  openPlayPage({ path: `/detail/${siteKey.value}/${id}`, query: { autoplay: '1' } }, 'vod')
 }
 </script>
 
