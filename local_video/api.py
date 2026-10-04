@@ -41,6 +41,17 @@ def add_dir(body: dict):
     return row
 
 
+@router.put("/dirs/order")
+def reorder_dirs(body: dict):
+    """按传入 id 顺序重排媒体目录，顺序用于设置页列表与片库页筛选条。"""
+    ids = body.get("ids")
+    if not isinstance(ids, list) or not all(isinstance(i, int) for i in ids):
+        raise HTTPException(400, "ids 必须为目录 ID 数组")
+    if not _get_db().reorder_dirs(ids):
+        raise HTTPException(400, "目录 ID 列表与现有目录不一致")
+    return {"ok": True, "dirs": _get_db().list_dirs()}
+
+
 @router.delete("/dirs/{dir_id}")
 def delete_dir(dir_id: int):
     if not _get_db().delete_dir(dir_id):

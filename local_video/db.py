@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS dirs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     path TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
     added_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     last_scan TEXT
 );
@@ -42,6 +43,14 @@ class Database:
         self._lock = threading.RLock()
         with self._connect() as conn:
             conn.executescript(SCHEMA)
+            self._migrate(conn)
+
+    @staticmethod
+    def _migrate(conn: sqlite3.Connection) -> None:
+        """旧库升级：dirs 表补 sort_order 列（存量行全为 0，仍按 id 序）。"""
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(dirs)").fetchall()}
+        if "sort_order" not in cols:
+            conn.execute("ALTER TABLE dirs ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
 
     @contextmanager
     def _connect(self):
@@ -57,7 +66,7 @@ class Database:
         with self._lock, self._connect() as conn:
             rows = conn.execute(
                 "SELECT d.*, (SELECT COUNT(*) FROM videos v WHERE v.dir_path = d.path) AS video_count "
-                "FROM dirs d ORDER BY d.id"
+                "FROM dirs d ORDER BY d.sort_order, d.id"
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -68,7 +77,11 @@ class Database:
             if existing:
                 return dict(existing)
             name = path.replace("/", "\\").rsplit("\\", 1)[-1] or path
-            cur = conn.execute("INSERT INTO dirs (path, name) VALUES (?, ?)", (path, name))
+            cur = conn.execute(
+                "INSERT INTO dirs (path, name, sort_order) VALUES (?, ?, "
+                "(SELECT COALESCE(MAX(sort_order), 0) + 1 FROM dirs))",
+                (path, name),
+            )
             new_id = cur.lastrowid
         return self.get_dir(new_id)
 
@@ -85,6 +98,16 @@ class Database:
                 return False
             conn.execute("DELETE FROM videos WHERE dir_path = ?", (row["path"],))
             conn.execute("DELETE FROM dirs WHERE id = ?", (dir_id,))
+        return True
+
+    def reorder_dirs(self, ordered_ids: list[int]) -> bool:
+        """按传入顺序重排目录；ids 必须与现有目录一一对应才生效。"""
+        with self._lock, self._connect() as conn:
+            existing = [r["id"] for r in conn.execute("SELECT id FROM dirs").fetchall()]
+            if sorted(ordered_ids) != sorted(existing):
+                return False
+            for idx, dir_id in enumerate(ordered_ids):
+                conn.execute("UPDATE dirs SET sort_order = ? WHERE id = ?", (idx, dir_id))
         return True
 
     def touch_scan(self, dir_id: int) -> None:

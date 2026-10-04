@@ -128,7 +128,7 @@
             <n-button type="primary" :loading="adding" :disabled="!newDir.trim()" @click="addDir">添加目录</n-button>
           </div>
           <div v-if="!dirs.length" class="no-config">尚未添加任何目录</div>
-          <div v-for="d in dirs" :key="d.id" class="dir-item">
+          <div v-for="(d, idx) in dirs" :key="d.id" class="dir-item">
             <div class="dir-info">
               <div class="dir-path" :title="d.path">{{ d.path }}</div>
               <div class="dir-meta">
@@ -138,10 +138,13 @@
               </div>
             </div>
             <div class="dir-actions">
+              <n-button size="small" quaternary circle :disabled="idx === 0" title="上移" aria-label="上移" @click="moveDir(idx, -1)">↑</n-button>
+              <n-button size="small" quaternary circle :disabled="idx === dirs.length - 1" title="下移" aria-label="下移" @click="moveDir(idx, 1)">↓</n-button>
               <n-button size="small" :loading="scanning" @click="scanDir(d)">扫描</n-button>
               <n-button size="small" type="error" ghost @click="removeDir(d)">删除</n-button>
             </div>
           </div>
+          <p v-if="dirs.length > 1" class="hint">用 ↑↓ 调整目录顺序，片库页的目录筛选条将按此顺序排列。</p>
         </n-space>
       </n-card>
     </div>
@@ -218,6 +221,21 @@ async function removeDir(d: any) {
     await refreshLocal()
   } catch (e: any) {
     message.error(`删除失败：${e.message}`)
+  }
+}
+
+async function moveDir(idx: number, delta: number) {
+  const target = idx + delta
+  if (target < 0 || target >= dirs.value.length) return
+  const prev = dirs.value
+  const list = [...prev]
+  ;[list[idx], list[target]] = [list[target], list[idx]]
+  dirs.value = list
+  try {
+    await localAPI.reorderDirs(list.map(d => d.id))
+  } catch (e: any) {
+    dirs.value = prev
+    message.error(`排序失败：${e.message}`)
   }
 }
 

@@ -66,6 +66,63 @@ def test_delete_dir(client, tmp_path):
     assert client.get("/api/local/videos").json()["total"] == 0
 
 
+def test_reorder_dirs(client, tmp_path):
+    for i in range(2):
+        d = tmp_path / f"ord{i}"
+        d.mkdir()
+        client.post("/api/local/dirs", json={"path": str(d)})
+    original = [d["id"] for d in client.get("/api/local/dirs").json()]
+    assert len(original) == 3
+
+    reordered = list(reversed(original))
+    r = client.put("/api/local/dirs/order", json={"ids": reordered})
+    assert r.status_code == 200
+    assert [d["id"] for d in r.json()["dirs"]] == reordered
+    assert [d["id"] for d in client.get("/api/local/dirs").json()] == reordered
+
+    # 新增目录排到队尾
+    tail = tmp_path / "ord_tail"
+    tail.mkdir()
+    client.post("/api/local/dirs", json={"path": str(tail)})
+    ids = [d["id"] for d in client.get("/api/local/dirs").json()]
+    assert ids[:3] == reordered
+
+    # 传入 ID 集合与现有目录不一致 → 400，顺序不变
+    r = client.put("/api/local/dirs/order", json={"ids": original[:1]})
+    assert r.status_code == 400
+    r = client.put("/api/local/dirs/order", json={"ids": "bad"})
+    assert r.status_code == 400
+    assert [d["id"] for d in client.get("/api/local/dirs").json()] == ids
+
+
+def test_migrate_old_dirs_schema(tmp_path):
+    """旧版数据库（dirs 无 sort_order 列）启动时自动迁移，顺序保持 id 序。"""
+    import sqlite3
+
+    db_path = tmp_path / "old.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE dirs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT UNIQUE NOT NULL,
+            name TEXT NOT NULL,
+            added_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+            last_scan TEXT
+        );
+        INSERT INTO dirs (path, name) VALUES ('C:\\a', 'a'), ('C:\\b', 'b');
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    db = Database(str(db_path))
+    assert [d["name"] for d in db.list_dirs()] == ["a", "b"]
+    assert db.reorder_dirs([2, 1])
+    assert [d["id"] for d in db.list_dirs()] == [2, 1]
+    assert not db.reorder_dirs([1])
+
+
 def test_list_videos_search_sort(client):
     data = client.get("/api/local/videos").json()
     assert data["total"] == 1
