@@ -130,6 +130,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useMessage, NButton, NInput, NSelect, NSkeleton, NProgress, NEmpty, NSpin } from 'naive-ui'
 import { localAPI } from '@/api/local'
 import { openPlayPage } from '@/utils/navigation'
+import { isMobileDevice } from '@/utils/device'
 import { formatDuration, formatSize } from '@/utils/format'
 import BackTop from '@/components/BackTop.vue'
 
@@ -374,10 +375,11 @@ let pollTimer: number | undefined
 onMounted(async () => {
   dirs.value = await localAPI.dirs().catch(() => [])
   groups.value = await localAPI.groups().catch(() => [])
-  // 配置了外部播放器路径才显示卡片角标按钮
+  // 配置了外部播放器路径且非移动终端才显示卡片角标按钮
+  // （移动终端浏览器无法调起本机 exe 播放器，对移动端隐藏入口）
   fetch('/api/system/config')
     .then((r) => r.json())
-    .then((data) => { extPlayerEnabled.value = !!data?.data?.external_player_path })
+    .then((data) => { extPlayerEnabled.value = !!data?.data?.external_player_path && !isMobileDevice() })
     .catch(() => {})
   ensureActiveTab()
   if (dirId.value === null && groupId.value === null) loadVideos()

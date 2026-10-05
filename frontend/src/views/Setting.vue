@@ -180,7 +180,7 @@
               <n-input v-model:value="externalPlayer" placeholder="例如：D:\Program Files\DAUM\PotPlayer\PotPlayerMini64.exe" @keyup.enter="saveExternalPlayer" clearable />
               <n-button type="primary" :loading="savingPlayer" @click="saveExternalPlayer">保存</n-button>
             </div>
-            <p class="hint">路径持久化保存，应用重启不丢失；留空则片库页不显示外部播放按钮。</p>
+            <p class="hint">路径持久化保存，应用重启不丢失；留空则片库页不显示外部播放按钮。调用入口仅桌面端浏览器显示（移动终端无法调起本机播放器）。</p>
           </div>
           <div class="dir-form">
             <n-input v-model:value="newDir" placeholder="例如：F:\telegram" @keyup.enter="addDir" />
