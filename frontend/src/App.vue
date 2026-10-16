@@ -2,7 +2,7 @@
   <n-config-provider :theme="currentTheme">
     <n-message-provider>
       <n-layout position="absolute">
-        <n-layout-header bordered class="app-header">
+        <n-layout-header v-if="!isLoginPage" bordered class="app-header">
           <div class="header-content">
             <div class="logo" @click="$router.push('/')">FongMi TV</div>
             <nav class="nav-links">
@@ -54,13 +54,16 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { NConfigProvider, NMessageProvider, NLayout, NLayoutHeader, NLayoutContent, NInput, darkTheme } from 'naive-ui'
 
 const router = useRouter()
+const route = useRoute()
 const searchKeyword = ref('')
 const isDark = ref(true)
 const THEME_KEY = 'fongmi_theme'
+
+const isLoginPage = computed(() => route.path === '/login')
 
 try {
   const saved = localStorage.getItem(THEME_KEY)

@@ -89,6 +89,12 @@ FastAPI × Vue 3 全栈实现 · 点播聚合 · IPTV 直播 · 弹幕字幕 · 
 - 局域网共享：`0.0.0.0` 监听，电视 / 手机 / 平板直接访问 `http://<你的IP>:8000`
 - 中文界面 · 暗色主题
 
+### 登录管控
+- 配置文件驱动：在 `data/auth.json` 填写账号密码即开启，账号或密码留空（或文件不存在）则保持免登录
+- 开启后所有页面与接口都需登录；API 返回 401，页面自动跳转登录页
+- HttpOnly Cookie 会话（HMAC 签名，12 小时有效），登录失败按 IP 限速
+- 设置页可一键开启 / 关闭 / 退出登录；配置改动即时生效，无需重启
+
 > 🖼️ 截图位（欢迎补充）：把运行截图放进 `docs/screenshots/` 后取消注释
 >
 > <!--
@@ -203,6 +209,10 @@ fongmi-web/
 │   ├── store.py            #   索引存储（片名清洗 + 去重）
 │   ├── indexer.py          #   索引编排 + 聚合搜索虚拟源
 │   └── tests/              #   pytest
+├── auth/                   # 登录管控（配置文件驱动）
+│   ├── core.py             #   配置读取 + 会话令牌 + 限速 + 路径判定
+│   ├── api.py              #   登录/登出/状态/配置 接口
+│   └── tests/              #   pytest
 ├── downloader/             # 统一下载引擎（TG / 网盘 / 直链共用）
 │   ├── engine.py           #   Range 分片并发 + 断点续传
 │   ├── journal.py          #   .part sidecar 断点记录
@@ -236,7 +246,7 @@ fongmi-web/
 
 ```bash
 # 后端单元测试
-pytest api/tests local_video/tests pan/tests tg/tests downloader/tests resource_search/tests
+pytest api/tests local_video/tests pan/tests tg/tests downloader/tests resource_search/tests auth/tests
 
 # 前端单元测试
 cd frontend && npm run test
@@ -286,6 +296,26 @@ JS 爬虫需要 Python 包 `quickjs`（已在 requirements.txt 中）或系统�
 </details>
 
 <details>
+<summary><b>怎么开启登录，防止别人看到我的视频？</b></summary>
+
+两种方式（二选一）：
+
+1. **配置文件**：在项目根目录建 `data/auth.json`（可复制 `auth.json.example`），填入账号密码：
+   ```json
+   { "username": "admin", "password": "你的密码" }
+   ```
+2. **设置页**：打开「设置 → 登录管控」，填账号密码后点保存。
+
+保存后立即生效，所有页面与接口都需要登录。**账号或密码留空（或删掉 `data/auth.json`）即关闭登录**，程序恢复免登录。密码以明文存于该文件（本机文件，请自行保管好权限）。
+</details>
+
+<details>
+<summary><b>忘记登录密码了怎么办？</b></summary>
+
+直接编辑 `data/auth.json` 改成新密码（或把账号密码清空以临时关闭登录），保存后立即生效，无需重启。
+</details>
+
+<details>
 <summary><b>端口被占用 / 想换端口？</b></summary>
 
 ```bash
@@ -301,6 +331,7 @@ python -m uvicorn main:app --host 0.0.0.0 --port 9000
 - [x] 网盘解析（10 平台）+ 统一下载引擎（分片断点续传）
 - [x] Telegram 解析/在线播放/下载（tdl 包壳）
 - [x] 资源索引 + 聚合搜索虚拟源（TG/网盘）
+- [x] 登录管控（配置文件驱动，账号密码可留空关闭）
 - [ ] Tauri 桌面壳打包（可选）
 - [ ] 弹幕在线匹配
 - [ ] 多语言界面

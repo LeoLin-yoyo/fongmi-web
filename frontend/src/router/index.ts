@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 
 const routes: RouteRecordRaw[] = [
+  { path: '/login', name: 'Login', component: () => import('@/views/LoginPage.vue') },
   { path: '/', name: 'Home', component: () => import('@/views/Home.vue') },
   { path: '/setting', name: 'Setting', component: () => import('@/views/Setting.vue') },
   { path: '/category/:site', name: 'Category', component: () => import('@/views/CategoryPage.vue') },
@@ -21,6 +22,26 @@ const routes: RouteRecordRaw[] = [
 const router = createRouter({
   history: createWebHistory(),
   routes,
+})
+
+// 登录守卫：需要认证且未登录时，任何页面都先跳登录页
+let authChecked = false
+let authRequired = false
+
+router.beforeEach(async (to) => {
+  if (to.path === '/login') return true
+  if (!authChecked) {
+    try {
+      const { authAPI } = await import('@/api/auth')
+      const res: any = await authAPI.status()
+      authRequired = !!res.data?.required && !res.data?.authenticated
+    } catch { authRequired = false }
+    authChecked = true
+  }
+  if (authRequired) {
+    return { path: '/login', query: { redirect: to.fullPath } }
+  }
+  return true
 })
 
 // 导航埋点（T0-1）：统计首页→首次播放步数

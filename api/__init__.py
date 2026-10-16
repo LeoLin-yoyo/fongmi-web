@@ -3,10 +3,12 @@ from api import config, vod, player, live, history as history_mod, image, system
 from api import resources as resources_api
 from pan import api as pan_api
 from tg import api as tg_api
+from auth import api as auth_api
 
 api_router = APIRouter()
 
 # Each sub-router includes its own prefix
+api_router.include_router(auth_api.router)
 api_router.include_router(vod.router)
 api_router.include_router(player.router)
 api_router.include_router(live.router)

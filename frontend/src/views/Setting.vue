@@ -185,6 +185,28 @@
       </n-card>
     </div>
 
+    <div class="section" id="sec-auth">
+      <n-card title="登录管控">
+        <n-space vertical :size="12">
+          <p class="hint">开启后，所有页面与接口都需要登录才能访问。账号密码保存在 <code>data/auth.json</code>；账号或密码留空即关闭登录。</p>
+          <div class="auth-status">
+            <n-tag size="small" :type="authRequired ? 'success' : 'default'">
+              {{ authRequired ? '已开启登录' : '未开启（无需登录）' }}
+            </n-tag>
+            <span v-if="authRequired && authUsername" class="auth-user">当前账号：{{ authUsername }}</span>
+          </div>
+          <div class="dir-form">
+            <n-input v-model:value="authUser" placeholder="账号（留空=关闭登录）" />
+            <n-input v-model:value="authPass" type="password" show-password-on="click" placeholder="密码" />
+          </div>
+          <div class="btn-row">
+            <n-button type="primary" :loading="savingAuth" @click="saveAuth">保存</n-button>
+            <n-button v-if="authRequired" type="warning" ghost @click="logout">退出登录</n-button>
+          </div>
+        </n-space>
+      </n-card>
+    </div>
+
     <div class="section" id="sec-play">
       <n-card title="播放设置">
         <div class="pref-item">
@@ -310,6 +332,7 @@ import { localAPI } from '@/api/local'
 import { downloadAPI } from '@/api/downloads'
 import { panAPI } from '@/api/pan'
 import { resourceAPI } from '@/api/resources'
+import { authAPI } from '@/api/auth'
 import { playOpenPrefs } from '@/utils/playPrefs'
 import BackTop from '@/components/BackTop.vue'
 
@@ -337,6 +360,11 @@ const indexingTg = ref(false)
 const indexingPan = ref(false)
 const indexStats = ref<any[]>([])
 const loadingStats = ref(false)
+const authRequired = ref(false)
+const authUsername = ref('')
+const authUser = ref('')
+const authPass = ref('')
+const savingAuth = ref(false)
 const dirs = ref<any[]>([])
 const stats = ref<any>({})
 const newDir = ref('')
@@ -361,6 +389,7 @@ const sections = [
   { key: 'sec-proxy', label: '代理设置' },
   { key: 'sec-download', label: '网盘与下载' },
   { key: 'sec-resources', label: '资源索引' },
+  { key: 'sec-auth', label: '登录管控' },
   { key: 'sec-play', label: '播放设置' },
   { key: 'sec-local', label: '本地视频' },
 ]
@@ -572,6 +601,7 @@ onMounted(async () => {
   await loadLiveSources()
   await loadDownloadSettings()
   await loadIndexStats()
+  await loadAuth()
   await refreshLocal()
   refreshGroups()
   pollLocalStatus()
@@ -682,6 +712,44 @@ async function clearIndex() {
     await loadIndexStats()
   } catch {
     message.error('清空失败')
+  }
+}
+
+async function loadAuth() {
+  try {
+    const res: any = await authAPI.getConfig()
+    authRequired.value = !!res.data?.required
+    authUser.value = res.data?.username || ''
+    authPass.value = ''
+    const st: any = await authAPI.status()
+    authUsername.value = st.data?.username || ''
+  } catch { /* ignore */ }
+}
+
+async function saveAuth() {
+  const u = authUser.value.trim()
+  if (!!u !== !!authPass.value) {
+    message.warning('账号与密码必须同时填写，或同时留空以关闭登录')
+    return
+  }
+  savingAuth.value = true
+  try {
+    await authAPI.setConfig(u, authPass.value)
+    message.success(u ? '登录管控已开启' : '登录管控已关闭')
+    await loadAuth()
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail || '保存失败')
+  } finally {
+    savingAuth.value = false
+  }
+}
+
+async function logout() {
+  try {
+    await authAPI.logout()
+    window.location.href = '/login'
+  } catch {
+    message.error('退出失败')
   }
 }
 
@@ -910,6 +978,8 @@ async function removeLive(id: number) {
 .idx-stats { display: flex; flex-direction: column; gap: 6px; }
 .idx-item { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; border-radius: 6px; background: rgba(128,128,128,0.08); font-size: 13px; }
 .idx-count { color: var(--n-primary-color); }
+.auth-status { display: flex; align-items: center; gap: 12px; }
+.auth-user { font-size: 13px; color: #888; }
 .pref-item:last-child { border-bottom: none; }
 .pref-info { flex: 1; min-width: 0; }
 .pref-name { font-size: 14px; font-weight: 500; }

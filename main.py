@@ -2,7 +2,7 @@ import os
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 import json as json_mod
@@ -13,6 +13,7 @@ from api import api_router
 from local_video import api as local_api
 from local_video.state import init_local_video
 from downloader import init_downloader
+from auth import core as auth_core
 
 FRONTEND_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "dist")
 
@@ -33,6 +34,28 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="FongMi TV Web", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+@app.middleware("http")
+async def auth_guard(request: Request, call_next):
+    """登录管控：认证关闭时全部放行；开启后除登录接口与静态资源外都要求有效会话。
+
+    - API 请求未登录 → 401 JSON
+    - 页面请求未登录 → 302 重定向到 /login
+    """
+    if not auth_core.is_enabled():
+        return await call_next(request)
+
+    path = request.url.path
+    if request.method == "OPTIONS" or auth_core.is_public_path(path):
+        return await call_next(request)
+
+    if auth_core.verify_token(request.cookies.get(auth_core.COOKIE_NAME)):
+        return await call_next(request)
+
+    if path.startswith("/api/"):
+        return JSONResponse(status_code=401, content={"code": 1, "detail": "未登录"})
+    return RedirectResponse("/login", status_code=302)
 
 
 @app.exception_handler(RequestValidationError)
