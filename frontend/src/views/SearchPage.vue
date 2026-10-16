@@ -291,9 +291,13 @@ async function doSearch() {
 function goDetail(v: any) {
   const siteKey = v._site_key
   const vodId = v.vod_id
-  if (siteKey && vodId) {
-    openPlayPage({ path: `/detail/${siteKey}/${vodId}`, query: { autoplay: '1' } }, 'vod')
+  if (!siteKey || !vodId) return
+  // 虚拟源（TG 频道 / 网盘资源）走资源详情页
+  if (v._kind === 'tg' || v._kind === 'pan' || siteKey.startsWith('tg:') || siteKey.startsWith('pan:')) {
+    openPlayPage({ path: `/resource/${vodId}` }, 'vod')
+    return
   }
+  openPlayPage({ path: `/detail/${siteKey}/${vodId}`, query: { autoplay: '1' } }, 'vod')
 }
 </script>
 

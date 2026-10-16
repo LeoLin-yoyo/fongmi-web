@@ -8,6 +8,9 @@
             <nav class="nav-links">
               <router-link to="/">首页</router-link>
               <router-link to="/live">直播</router-link>
+              <router-link to="/pan">网盘</router-link>
+              <router-link to="/tg">TG</router-link>
+              <router-link to="/downloads">下载</router-link>
               <router-link to="/local">本地</router-link>
               <router-link to="/history">我的</router-link>
               <router-link to="/setting">设置</router-link>

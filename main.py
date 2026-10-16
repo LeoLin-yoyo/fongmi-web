@@ -12,6 +12,7 @@ from model.database import init_db
 from api import api_router
 from local_video import api as local_api
 from local_video.state import init_local_video
+from downloader import init_downloader
 
 FRONTEND_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "dist")
 
@@ -20,7 +21,14 @@ FRONTEND_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fronte
 async def lifespan(app: FastAPI):
     await init_db()
     init_local_video()
+    init_downloader()
     yield
+    # 关闭时清理 tdl serve 会话（避免孤儿进程持锁）
+    try:
+        from tg.serve import serve_manager
+        await serve_manager.stop_all()
+    except Exception:
+        pass
 
 
 app = FastAPI(title="FongMi TV Web", lifespan=lifespan)

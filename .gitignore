@@ -55,3 +55,10 @@ us/
 front/
 .mimosa/
 frontend/.mimosa/
+temp/
+
+# Playwright CLI session artifacts
+.playwright-cli/
+
+# 自动下载的 tdl 二进制（运行时生成，不入库）
+tdl/

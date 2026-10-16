@@ -129,6 +129,62 @@
       </n-card>
     </div>
 
+    <div class="section" id="sec-download">
+      <n-card title="网盘与下载">
+        <n-space vertical :size="12">
+          <div class="group-title">下载目录<span class="group-hint">网盘 / TG 下载落盘位置；留空使用默认 data/downloads</span></div>
+          <div class="dir-form">
+            <n-input v-model:value="downloadDir" placeholder="例如：D:\Downloads 或 /mnt/media" @keyup.enter="saveDownloadDir" clearable />
+            <n-button type="primary" :loading="savingDlDir" @click="saveDownloadDir">保存</n-button>
+          </div>
+          <p class="hint">绝对路径，目录需可写；下载完成后若该目录已加入「本地视频」，会自动并入片库。</p>
+
+          <div class="group-title" style="margin-top:6px">网盘账号<span class="group-hint">夸克 / UC 可直接粘贴 Cookie 登录（未登录也可解析小文件）</span></div>
+          <div v-for="a in panAccounts" :key="a.platform" class="pan-acct-row">
+            <div class="pan-acct-name">
+              {{ a.label }}
+              <n-tag v-if="a.has_cookie && a.valid" size="small" type="success">已登录{{ a.nickname ? '：' + a.nickname : '' }}</n-tag>
+              <n-tag v-else-if="a.has_cookie" size="small" type="warning">失效</n-tag>
+              <n-tag v-else size="small">未登录</n-tag>
+            </div>
+            <div class="pan-acct-actions">
+              <n-button size="small" @click="gotoPan">{{ a.has_cookie ? '管理' : '去登录' }}</n-button>
+            </div>
+          </div>
+          <n-button size="small" quaternary @click="gotoPan">打开网盘解析页 →</n-button>
+        </n-space>
+      </n-card>
+    </div>
+
+    <div class="section" id="sec-resources">
+      <n-card title="资源索引">
+        <n-space vertical :size="12">
+          <p class="hint">把 TG 频道 / 网盘分享目录建成可搜索的本地索引；索引后可在「搜索」页跨源检索，点击结果直接播放或下载。</p>
+          <div class="group-title">索引 TG 频道<span class="group-hint">@username 或频道 id</span></div>
+          <div class="dir-form">
+            <n-input v-model:value="tgPeer" placeholder="@channel 或 频道id" />
+            <n-button type="primary" :loading="indexingTg" @click="doIndexTg">索引</n-button>
+          </div>
+          <div class="group-title" style="margin-top:6px">索引网盘分享目录</div>
+          <div class="dir-form">
+            <n-input v-model:value="panLink" placeholder="粘贴网盘分享链接（含提取码）" />
+            <n-button type="primary" :loading="indexingPan" @click="doIndexPan">索引</n-button>
+          </div>
+          <div v-if="indexStats.length" class="idx-stats">
+            <div v-for="s in indexStats" :key="s.site_key" class="idx-item">
+              <span class="idx-name">{{ s.site_name || s.site_key }}</span>
+              <span class="idx-count">{{ s.count }} 条</span>
+            </div>
+          </div>
+          <div v-else class="no-config">尚未建立索引</div>
+          <div class="btn-row">
+            <n-button size="small" :loading="loadingStats" @click="loadIndexStats">刷新统计</n-button>
+            <n-button size="small" type="error" ghost :disabled="!indexStats.length" @click="clearIndex">清空索引</n-button>
+          </div>
+        </n-space>
+      </n-card>
+    </div>
+
     <div class="section" id="sec-play">
       <n-card title="播放设置">
         <div class="pref-item">
@@ -247,13 +303,18 @@
 
 <script setup lang="ts">
 import { ref, computed, reactive, onMounted, onUnmounted, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import { useMessage, NCard, NTabs, NTabPane, NInput, NButton, NUpload, NUploadDragger, NText, NTag, NSpace, NSwitch, NSelect } from 'naive-ui'
 import { importConfig, importBatch, getConfigs, deleteConfig, toggleConfig, checkBatch, importLiveBatch, getLiveSources, deleteLiveSource, toggleLiveSource, renameConfig } from '@/api/config'
 import { localAPI } from '@/api/local'
+import { downloadAPI } from '@/api/downloads'
+import { panAPI } from '@/api/pan'
+import { resourceAPI } from '@/api/resources'
 import { playOpenPrefs } from '@/utils/playPrefs'
 import BackTop from '@/components/BackTop.vue'
 
 const message = useMessage()
+const router = useRouter()
 const url = ref('')
 const importing = ref(false)
 const checking = ref(false)
@@ -267,6 +328,15 @@ const liveSources = ref<any[]>([])
 const proxy = ref('')
 const externalPlayer = ref('')
 const savingPlayer = ref(false)
+const downloadDir = ref('')
+const savingDlDir = ref(false)
+const panAccounts = ref<any[]>([])
+const tgPeer = ref('')
+const panLink = ref('')
+const indexingTg = ref(false)
+const indexingPan = ref(false)
+const indexStats = ref<any[]>([])
+const loadingStats = ref(false)
 const dirs = ref<any[]>([])
 const stats = ref<any>({})
 const newDir = ref('')
@@ -289,6 +359,8 @@ const sections = [
   { key: 'sec-configs', label: '点播配置' },
   { key: 'sec-livesrc', label: '直播源' },
   { key: 'sec-proxy', label: '代理设置' },
+  { key: 'sec-download', label: '网盘与下载' },
+  { key: 'sec-resources', label: '资源索引' },
   { key: 'sec-play', label: '播放设置' },
   { key: 'sec-local', label: '本地视频' },
 ]
@@ -498,6 +570,8 @@ onMounted(async () => {
   } catch {}
   await loadConfigs()
   await loadLiveSources()
+  await loadDownloadSettings()
+  await loadIndexStats()
   await refreshLocal()
   refreshGroups()
   pollLocalStatus()
@@ -526,6 +600,88 @@ async function saveProxy() {
     message.success('保存成功，请刷新页面生效')
   } catch (e: any) {
     message.error('保存失败: ' + (e?.message || ''))
+  }
+}
+
+async function loadDownloadSettings() {
+  try {
+    const res = await downloadAPI.config()
+    downloadDir.value = res.dir || ''
+  } catch {}
+  try {
+    const res: any = await panAPI.accounts()
+    panAccounts.value = res.data || []
+  } catch {}
+}
+
+async function saveDownloadDir() {
+  savingDlDir.value = true
+  try {
+    const res = await downloadAPI.setConfig(downloadDir.value.trim())
+    downloadDir.value = res.dir
+    message.success('下载目录已保存')
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail || '保存失败')
+  } finally {
+    savingDlDir.value = false
+  }
+}
+
+function gotoPan() {
+  router.push('/pan')
+}
+
+async function loadIndexStats() {
+  loadingStats.value = true
+  try {
+    const res: any = await resourceAPI.stats()
+    indexStats.value = res.data || []
+  } catch { /* ignore */ } finally {
+    loadingStats.value = false
+  }
+}
+
+async function doIndexTg() {
+  if (!tgPeer.value.trim()) { message.warning('请填写 TG 频道'); return }
+  indexingTg.value = true
+  try {
+    const res: any = await resourceAPI.indexTg(tgPeer.value.trim())
+    message.success(`已索引 ${res.data?.added ?? 0} 条（共 ${res.data?.total ?? 0}）`)
+    await loadIndexStats()
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail || '索引失败')
+  } finally {
+    indexingTg.value = false
+  }
+}
+
+async function doIndexPan() {
+  const text = panLink.value.trim()
+  if (!text) { message.warning('请粘贴网盘分享链接'); return }
+  indexingPan.value = true
+  try {
+    const { parseShareLinkClient } = await import('@/utils/panLink')
+    const parsed = parseShareLinkClient(text)
+    if (!parsed) { message.error('无法识别分享链接'); return }
+    const res: any = await resourceAPI.indexPan({
+      platform: parsed.platform, share_id: parsed.share_id, passcode: parsed.passcode,
+    })
+    message.success(`已索引 ${res.data?.added ?? 0} 条（共 ${res.data?.total ?? 0}）`)
+    await loadIndexStats()
+  } catch (e: any) {
+    message.error(e?.response?.data?.detail || '索引失败')
+  } finally {
+    indexingPan.value = false
+  }
+}
+
+async function clearIndex() {
+  try {
+    await resourceAPI.clear()
+    message.success('索引已清空')
+    await loadIndexStats()
+  } catch {
+    message.error('清空失败')
   }
 }
 
@@ -747,6 +903,13 @@ async function removeLive(id: number) {
 .group-actions { display: flex; gap: 8px; }
 .no-group { text-align: center; padding: 16px; color: #888; font-size: 13px; }
 .pref-item { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--n-divider-color); }
+.pan-acct-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--n-divider-color); }
+.pan-acct-row:last-of-type { border-bottom: none; }
+.pan-acct-name { font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.pan-acct-actions { display: flex; gap: 8px; }
+.idx-stats { display: flex; flex-direction: column; gap: 6px; }
+.idx-item { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; border-radius: 6px; background: rgba(128,128,128,0.08); font-size: 13px; }
+.idx-count { color: var(--n-primary-color); }
 .pref-item:last-child { border-bottom: none; }
 .pref-info { flex: 1; min-width: 0; }
 .pref-name { font-size: 14px; font-weight: 500; }

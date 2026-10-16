@@ -72,6 +72,9 @@ export function usePlayer() {
   }
 
   function buildProxyUrl(url: string, headers: Record<string, string> | null | undefined): string {
+    // 服务端已签发的同源流地址（/api/pan/stream/*、/api/tg/stream/*）本身就是代理，
+    // 不能再套一层 /api/player/proxy（否则 400），直接播放。
+    if (url.startsWith('/api/')) return url
     if (!useProxy.value) return url
     if (headers && Object.keys(headers).length > 0) {
       return `/api/player/proxy/${encodeURIComponent(url)}?extra_headers=${encodeURIComponent(JSON.stringify(headers))}`

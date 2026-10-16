@@ -71,7 +71,8 @@ async def search_aggregated(keyword: str) -> dict:
         )
         enabled_ids = [c.id for c in enabled_configs.scalars().all()]
         if not enabled_ids:
-            return {"merged": [], "per_site": {}}
+            # 无点播配置时仍可返回本地资源索引结果
+            return await _with_resource_index(keyword, {"merged": [], "per_site": {}})
 
         result = await session.execute(
             select(SiteModel).where(SiteModel.searchable == 1, SiteModel.config_id.in_(enabled_ids))
@@ -129,7 +130,24 @@ async def search_aggregated(keyword: str) -> dict:
             seen.add(key)
             unique.append(item)
 
-    return {"merged": unique, "per_site": per_site}
+    return await _with_resource_index(keyword, {"merged": unique, "per_site": per_site})
+
+
+async def _with_resource_index(keyword: str, result: dict) -> dict:
+    """并入本地资源索引（TG 频道 / 网盘资源）的搜索结果，虚拟源以 _site_key 分 tab。"""
+    try:
+        from resource_search.indexer import search_resources
+        extra = await search_resources(keyword)
+    except Exception as e:
+        logger.debug(f"resource index search failed: {e}")
+        return result
+    if not extra.get("merged"):
+        return result
+    merged = result.get("merged", []) + extra["merged"]
+    per_site = dict(result.get("per_site", {}))
+    for sk, info in extra["per_site"].items():
+        per_site[sk] = info
+    return {"merged": merged, "per_site": per_site}
 
 
 async def _expand_with_pinyin(keyword: str, merged: list, per_site: dict, site_info: dict) -> tuple:

@@ -103,6 +103,45 @@ class Keep(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
 
 
+class DownloadTask(Base):
+    """统一下载任务：TG / 网盘 / 直链共用一套分片断点引擎。"""
+
+    __tablename__ = "download_task"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source: Mapped[str] = mapped_column(String(16), default="url")  # tg / pan / url
+    name: Mapped[str] = mapped_column(String(512), default="")
+    url: Mapped[str] = mapped_column(Text, default="")
+    headers: Mapped[str] = mapped_column(Text, default="")          # JSON：请求头（含 Cookie）
+    folder: Mapped[str] = mapped_column(String(1024), default="")
+    filename: Mapped[str] = mapped_column(String(512), default="")
+    file_path: Mapped[str] = mapped_column(String(1024), default="")
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    error: Mapped[str] = mapped_column(Text, default="")
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    done: Mapped[int] = mapped_column(Integer, default=0)
+    speed: Mapped[int] = mapped_column(Integer, default=0)          # 字节/秒 EMA
+    block: Mapped[int] = mapped_column(Integer, default=0)          # 0=用引擎默认 8MiB
+    connections: Mapped[int] = mapped_column(Integer, default=0)    # 0=用引擎默认
+    extra: Mapped[str] = mapped_column(Text, default="")            # JSON：来源上下文（fid/口令等）
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
+    finished_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+
+
+class PanAccount(Base):
+    """网盘账号：Cookie 凭证 AES-GCM 加密落库（每平台一条）。"""
+
+    __tablename__ = "pan_account"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    platform: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    cookie: Mapped[str] = mapped_column(Text, default="")           # 密文
+    nickname: Mapped[str] = mapped_column(String(255), default="")
+    valid: Mapped[int] = mapped_column(Integer, default=1)          # 最近一次登录态校验结果
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
+
+
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

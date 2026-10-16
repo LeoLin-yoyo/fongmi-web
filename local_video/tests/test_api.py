@@ -415,6 +415,7 @@ def test_external_play_file_gone(client, tmp_path, monkeypatch):
     assert "移动或删除" in r.json()["detail"]
 
 
+@pytest.mark.skipif(os.name != "nt", reason="外部播放器 ShellExecute 仅 Windows 可用")
 def test_external_play_launches_player(client, tmp_path, monkeypatch):
     player = _setup_player(tmp_path, monkeypatch)
     video = client.get("/api/local/videos").json()["items"][0]
@@ -435,6 +436,7 @@ def test_external_play_launches_player(client, tmp_path, monkeypatch):
     assert video["path"] in params  # 视频完整路径作为参数传给播放器
 
 
+@pytest.mark.skipif(os.name != "nt", reason="外部播放器 ShellExecute 仅 Windows 可用")
 def test_external_play_shellexecute_failure(client, tmp_path, monkeypatch):
     _setup_player(tmp_path, monkeypatch)
     video = client.get("/api/local/videos").json()["items"][0]

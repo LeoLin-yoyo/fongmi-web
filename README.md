@@ -39,6 +39,31 @@ FastAPI × Vue 3 全栈实现 · 点播聚合 · IPTV 直播 · 弹幕字幕 · 
 - 封面图片代理：没有 CORS 头的站点也能正常显示封面
 - 卡片新标签页打开，浏览不丢上下文
 
+### 网盘解析（Pan）
+- 粘贴分享链接即解析：**10 平台全接入** —— 夸克 / UC / 迅雷 / 百度 / 139 / 123 / 115 / 光鸭 / 蓝奏云 / 蓝奏优享版
+- 自动识别提取码（链接参数或文案「提取码：xxxx」），夸克 / UC / 迅雷 / 139 / 光鸭 / 蓝奏系支持游客（未登录）直接播放
+- 目录浏览 + 面包屑，文件一键**在线播放**或**加入下载**
+- 账号凭证粘贴登录，AES-256-GCM 加密落库；登录态校验与昵称回显
+- 各平台私有协议完整移植：115 电脑端 RSA+XOR、123 CRC32 签名、139 AES-CBC + mcloud-sign、蓝奏 acw_sc__v2
+
+### 下载（Download）
+- 统一下载引擎：Range 分片并发 + `.part` 断点续传，一字节不浪费
+- 暂停 / 继续 / 取消，重启后自动续传中断任务
+- 下载目录可自定义；完成后自动并入「本地视频」片库（若目录已托管）
+- SSE 实时进度 / 速度推送
+
+### Telegram（TG）
+- 粘贴 t.me 链接解析频道/群组消息，浏览文件清单
+- 在线播放：流式代理（1MiB 块 LRU + 多连接预取），不需要等下完
+- 一键加入下载队列（复用统一下载引擎）
+- 网页内完成登录：扫码 / 手机号验证码 / 两步验证，登录态跨重启有效
+- tdl 二进制自动下载（GitHub Releases，白名单校验）；全局串行队列（tdl bolt 单写者）
+
+### 资源索引 · 聚合搜索
+- 把 TG 频道 / 网盘分享目录建成可搜索的本地索引（片名自动清洗、去重）
+- 聚合搜索一次跑遍「点播站点 + 我的 TG 频道 + 我的网盘资源」，虚拟源以独立 Tab 呈现
+- 点击资源结果进入资源详情页，直接在线播放或加入下载
+
 ### 直播（IPTV）
 - M3U / TXT 直播源自动解析，同名频道多线路自动合并
 - EPG 电子节目单
@@ -110,27 +135,27 @@ python -m uvicorn main:app --host 0.0.0.0 --port 8000
 
 ```
 ┌───────────────────── 浏览器（Vue 3 + Naive UI SPA）─────────────────────┐
-│   首页 / 分类   聚合搜索   详情播放   IPTV 直播   本地媒体   设置中心      │
+│  首页/分类  聚合搜索  详情播放  IPTV直播  网盘解析  Telegram  下载  本地 │
 │        DPlayer · hls.js / flv.js · Canvas 弹幕 · srt/vtt 字幕           │
 └────────────────────────────────┬────────────────────────────────────────┘
                                  │ REST /api/*
 ┌────────────────────────────────▼────────────────────────────────────────┐
 │                FastAPI 后端（uvicorn · SQLite · httpx）                  │
 │                                                                        │
-│   VOD 点播      IPTV 直播      本地媒体库     收藏/历史     埋点指标      │
-│      │             │               │                                  │
-│      └─────────────┴───────┬───────┘                                  │
-│                   Spider 爬虫引擎                                     │
-│            ├─ Type=1  HTTP API 站点（直连）                             │
-│            └─ Type=0  JS 爬虫                                          │
-│                 ├─ QuickJS 沙箱（进程内，全局串行锁）                    │
-│                 └─ Node.js 常驻进程（兜底运行时）                       │
+│  VOD点播   IPTV直播   本地媒体   收藏/历史   埋点   网盘解析   Telegram  │
+│     │         │          │                        │          │         │
+│     │         │          │                    pan/（10平台）  tg/（tdl） │
+│     │         │          │                        │          │         │
+│     └─────────┴────┬─────┴────────┬───────────────┴──────────┘         │
+│              Spider 爬虫引擎   downloader 下载引擎   resource_search    │
+│         ├─ Type=1 HTTP API      Range 分片并发       TG/网盘资源索引     │
+│         └─ Type=0 JS 爬虫       + 断点续传           → 聚合搜索虚拟源    │
 └───────────────┬───────────────────────────┬────────────────────────────┘
                 ▼                           ▼
-         本地磁盘视频                订阅站点 / 直播源 / EPG
+         本地磁盘视频                订阅站点 / 直播源 / EPG / 网盘 / TG
 ```
 
-技术栈：FastAPI + SQLAlchemy(异步 SQLite) + httpx 后端，Vue 3 + Vite + Pinia + TypeScript 前端，AES-128-CBC 解密兼容 FongMi 协议。
+技术栈：FastAPI + SQLAlchemy(异步 SQLite) + httpx 后端，Vue 3 + Vite + Pinia + TypeScript 前端，AES-128-CBC 解密兼容 FongMi 协议。网盘/TG 直链由服务端签发（凭证 AES-256-GCM 加密落库），下载引擎走 Range 分片并发 + `.part` 断点续传。
 
 ## 🕷️ JS 爬虫引擎
 
@@ -155,6 +180,33 @@ fongmi-web/
 │   ├── image.py            #   封面图片代理
 │   ├── history.py          #   收藏/历史 CRUD
 │   ├── metrics.py          #   本地埋点聚合（P95 分位）
+│   ├── downloads.py        #   统一下载任务（暂停/续传/SSE 进度）
+│   ├── resources.py        #   资源索引（TG/网盘 → 可搜索）
+│   └── tests/              #   pytest
+├── pan/                    # 网盘解析（分享链接 → 直链 → 播放/下载）
+│   ├── link.py             #   10 平台分享链接识别 + 提取码
+│   ├── platforms/          #   各平台 API 客户端（quark / uc / …）
+│   ├── resolver.py         #   会话缓存 + 直链签发（token 化，防 SSRF）
+│   ├── accounts.py         #   账号 Cookie 管理（AES-GCM 加密落库）
+│   ├── crypto.py           #   凭证加密
+│   └── tests/              #   pytest
+├── tg/                     # Telegram 模块（tdl 包壳）
+│   ├── link.py             #   t.me 链接净化与解析
+│   ├── runner.py           #   tdl 执行器：串行队列 + 进度解析
+│   ├── login.py            #   交互登录状态机（PTY）
+│   ├── session.py          #   会话/聊天列表
+│   ├── serve.py            #   tdl serve 会话 + 文件清单
+│   ├── stream.py           #   在线播放流式代理（块缓存 + 预取）
+│   ├── tdlfetch.py         #   tdl 二进制自动下载
+│   └── tests/              #   pytest
+├── resource_search/        # 资源索引（TG 频道 / 网盘目录 → 可搜索）
+│   ├── store.py            #   索引存储（片名清洗 + 去重）
+│   ├── indexer.py          #   索引编排 + 聚合搜索虚拟源
+│   └── tests/              #   pytest
+├── downloader/             # 统一下载引擎（TG / 网盘 / 直链共用）
+│   ├── engine.py           #   Range 分片并发 + 断点续传
+│   ├── journal.py          #   .part sidecar 断点记录
+│   ├── tasks.py            #   任务状态机 + 速度 EMA + SSE
 │   └── tests/              #   pytest
 ├── spider/                 # 爬虫引擎
 │   ├── engine.py           #   调度：按站点类型分发 + LRU 缓存
@@ -184,7 +236,7 @@ fongmi-web/
 
 ```bash
 # 后端单元测试
-pytest api/tests local_video/tests
+pytest api/tests local_video/tests pan/tests tg/tests downloader/tests resource_search/tests
 
 # 前端单元测试
 cd frontend && npm run test
@@ -216,6 +268,24 @@ JS 爬虫需要 Python 包 `quickjs`（已在 requirements.txt 中）或系统�
 </details>
 
 <details>
+<summary><b>Telegram 功能需要什么？</b></summary>
+
+需要一个 `tdl` 可执行文件（[iyear/tdl](https://github.com/iyear/tdl)）。可在「设置 → Telegram」或 TG 页点「自动下载 tdl」，程序会从 GitHub Releases 拉取对应平台的二进制到项目 `tdl/` 目录。另外 TG 通常需要代理，在设置里配好代理即可。
+</details>
+
+<details>
+<summary><b>网盘账号怎么登录？</b></summary>
+
+在「设置 → 网盘与下载」或「网盘」页点对应平台的「登录」，粘贴浏览器 Cookie（F12 → 网络 → 任意请求 → 复制 Cookie 请求头）。凭证以 AES-256-GCM 加密保存在本机。夸克 / UC / 迅雷 / 139 / 光鸭 / 蓝奏系未登录也能解析播放，其余平台下载需登录。
+</details>
+
+<details>
+<summary><b>下载的文件在哪里？</b></summary>
+
+默认在项目 `data/downloads/`，可在「设置 → 网盘与下载」改成任意绝对路径。若该目录已加入「本地视频」媒体目录，下载完成后会自动并入片库。
+</details>
+
+<details>
 <summary><b>端口被占用 / 想换端口？</b></summary>
 
 ```bash
@@ -228,6 +298,9 @@ python -m uvicorn main:app --host 0.0.0.0 --port 9000
 - [x] 多订阅导入与站点合并去重
 - [x] 本地媒体库 + 缩略图
 - [x] 直播 EPG 与代理/直连切换
+- [x] 网盘解析（10 平台）+ 统一下载引擎（分片断点续传）
+- [x] Telegram 解析/在线播放/下载（tdl 包壳）
+- [x] 资源索引 + 聚合搜索虚拟源（TG/网盘）
 - [ ] Tauri 桌面壳打包（可选）
 - [ ] 弹幕在线匹配
 - [ ] 多语言界面

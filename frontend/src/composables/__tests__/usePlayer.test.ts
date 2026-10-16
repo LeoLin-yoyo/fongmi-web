@@ -88,6 +88,16 @@ describe('usePlayer', () => {
     expect(directUrl).toBe(url)
   })
 
+  it('should NOT wrap server-issued same-origin stream paths', async () => {
+    const { usePlayer } = await import('@/composables/usePlayer')
+    const player = usePlayer()
+    // pan/tg 已签发的流地址本身就是代理，不能再套一层
+    expect(player.buildProxyUrl('/api/pan/stream/abc', null)).toBe('/api/pan/stream/abc')
+    expect(player.buildProxyUrl('/api/tg/stream/sid/1001/1', null)).toBe('/api/tg/stream/sid/1001/1')
+    // 但仍允许代理外部 http(s) 地址
+    expect(player.buildProxyUrl('https://cdn.example.com/a.mp4', null)).toContain('/api/player/proxy/')
+  })
+
   it('should reset video info correctly', async () => {
     const { usePlayer } = await import('@/composables/usePlayer')
     const player = usePlayer()
