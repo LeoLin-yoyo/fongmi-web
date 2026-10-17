@@ -30,7 +30,11 @@ export const douyinAPI = {
     request.post('/douyin/download_all', { tokens, folder }) as unknown as
       Promise<{ ids: number[]; count: number }>,
   streamUrl: (token: string) => `/api/douyin/stream/${token}`,
-  config: () => request.get('/douyin/config') as unknown as Promise<{ data: { has_cookie: boolean } }>,
-  setConfig: (cookie: string) =>
-    request.post('/douyin/config', { cookie }) as unknown as Promise<{ data: any }>,
+  config: () => request.get('/douyin/config') as unknown as
+    Promise<{ data: { has_cookie: boolean; has_uifid: boolean; user_agent: string } }>,
+  setConfig: (cookie: string, userAgent = '') =>
+    request.post('/douyin/config', { cookie, user_agent: userAgent }) as unknown as
+      Promise<{ data: { has_cookie: boolean; has_uifid: boolean } }>,
+  verify: () => request.post('/douyin/verify', {}) as unknown as
+    Promise<{ code: number; data: { ok: boolean; detail: string } }>,
 }

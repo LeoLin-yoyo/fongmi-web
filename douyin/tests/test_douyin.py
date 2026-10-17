@@ -201,11 +201,41 @@ def test_api_stream_expired(client):
 def test_api_config_roundtrip(client, monkeypatch):
     import douyin.api as api_mod
     store = {"v": ""}
-    monkeypatch.setattr(api_mod, "get_config_value", lambda k, d="": store["v"])
-    monkeypatch.setattr(api_mod, "set_config_value", lambda k, v: store.update(v=v))
-    assert client.post("/api/douyin/config", json={"cookie": "abc=1"}).status_code == 200
-    assert store["v"] == "abc=1"
-    assert client.get("/api/douyin/config").json()["data"]["has_cookie"] is True
+    kv = {"cookie": "", "ua": ""}
+    monkeypatch.setattr(api_mod, "get_config_value",
+                        lambda k, d="": kv["cookie"] if k == "douyin_cookie" else kv["ua"])
+    monkeypatch.setattr(api_mod, "set_config_value",
+                        lambda k, v: kv.update(cookie=v) if k == "douyin_cookie" else kv.update(ua=v))
+    r = client.post("/api/douyin/config", json={"cookie": "ttwid=abc; uifid=xyz", "user_agent": "UA/1"})
+    assert r.status_code == 200
+    assert kv["cookie"] == "ttwid=abc; uifid=xyz"
+    assert kv["ua"] == "UA/1"
+    d = client.get("/api/douyin/config").json()["data"]
+    assert d["has_cookie"] is True and d["has_uifid"] is True
+
+
+def test_api_verify_requires_cookie(client, monkeypatch):
+    import douyin.api as api_mod
+    monkeypatch.setattr(api_mod, "get_config_value", lambda k, d="": "")
+    r = client.post("/api/douyin/verify", json={})
+    assert r.status_code == 400
+    assert "尚未配置" in r.json()["detail"]
+
+
+def test_api_verify_rejects_cookie_without_ttwid(client, monkeypatch):
+    import douyin.api as api_mod
+    monkeypatch.setattr(api_mod, "get_config_value",
+                        lambda k, d="": "foo=1; bar=2" if k == "douyin_cookie" else "")
+    r = client.post("/api/douyin/verify", json={})
+    assert r.status_code == 400
+    assert "ttwid" in r.json()["detail"]
+
+
+def test_cookie_key_detection():
+    from douyin.api import _has_any, _STRONG_COOKIE_KEYS
+    assert _has_any("ttwid=1; uifid=abc", _STRONG_COOKIE_KEYS) is True
+    assert _has_any("UIFID=ABC", _STRONG_COOKIE_KEYS) is True
+    assert _has_any("ttwid=1", _STRONG_COOKIE_KEYS) is False
 
 
 # ---------- SM3（国密标准测试向量） ----------

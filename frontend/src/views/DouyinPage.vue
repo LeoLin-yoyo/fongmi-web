@@ -74,15 +74,28 @@
     </template>
 
     <!-- Cookie 弹窗 -->
-    <n-modal v-model:show="showCookie" preset="card" title="抖音 Cookie（可选）" style="max-width: 560px">
+    <n-modal v-model:show="showCookie" preset="card" title="抖音 Cookie（推荐配置）" style="max-width: 620px">
       <div class="cookie-hint">
-        遇到「页面未包含数据」时，可粘贴浏览器 Cookie 提高成功率（F12 → 网络 → 任意请求 → 复制 Cookie）。仅保存在本机。
+        <b>抖音已开启 uifid 风控</b>，纯匿名解析会被拦截。粘贴一次浏览器 Cookie 即可长期使用：
+        <ol class="cookie-steps">
+          <li>电脑浏览器打开 <code>https://www.douyin.com</code> 并随便刷一下（确保已加载视频）</li>
+          <li>按 <code>F12</code> → <b>Network</b> → 点任意一条请求 → <b>Headers</b> → 复制 <b>Cookie</b> 整行</li>
+          <li>粘到下面；UA 也请一并复制（同一浏览器，否则签名不匹配）</li>
+        </ol>
+        <div class="cookie-keys">必须包含 <code>ttwid</code>；强烈建议含 <code>uifid</code>、<code>msToken</code></div>
       </div>
-      <n-input v-model:value="cookieInput" type="textarea" placeholder="例如：ttwid=1%7C...; msToken=..." :autosize="{ minRows: 4, maxRows: 10 }" />
+      <div class="field-label">Cookie</div>
+      <n-input v-model:value="cookieInput" type="textarea" placeholder="ttwid=1%7C...; uifid=...; msToken=..." :autosize="{ minRows: 4, maxRows: 10 }" />
+      <div class="field-label" style="margin-top:12px">User-Agent（可选，建议填写）</div>
+      <n-input v-model:value="uaInput" placeholder="Mozilla/5.0 (Windows NT 10.0; Win64; x64) ... Chrome/131.0.0.0 Safari/537.36" />
+      <div v-if="verifyMsg" class="verify-msg" :class="{ ok: verifyOk }">{{ verifyMsg }}</div>
       <template #footer>
-        <div style="display:flex;justify-content:flex-end;gap:8px">
-          <n-button @click="showCookie = false">取消</n-button>
-          <n-button type="primary" :loading="savingCookie" @click="saveCookie">保存</n-button>
+        <div style="display:flex;justify-content:space-between;gap:8px">
+          <n-button :loading="verifying" :disabled="!cookieInput.trim()" @click="verifyCookie">验证 Cookie</n-button>
+          <div style="display:flex;gap:8px">
+            <n-button @click="showCookie = false">取消</n-button>
+            <n-button type="primary" :loading="savingCookie" @click="saveCookie">保存</n-button>
+          </div>
         </div>
       </template>
     </n-modal>
@@ -103,7 +116,11 @@ const result = ref<DouyinResult | null>(null)
 const busy = ref(false)
 const showCookie = ref(false)
 const cookieInput = ref('')
+const uaInput = ref('')
 const savingCookie = ref(false)
+const verifying = ref(false)
+const verifyMsg = ref('')
+const verifyOk = ref(false)
 
 async function doResolve() {
   const text = inputText.value.trim()
@@ -154,7 +171,7 @@ async function downloadAll() {
 async function saveCookie() {
   savingCookie.value = true
   try {
-    await douyinAPI.setConfig(cookieInput.value.trim())
+    await douyinAPI.setConfig(cookieInput.value.trim(), uaInput.value.trim())
     message.success('已保存')
     showCookie.value = false
   } catch (e: any) {
@@ -164,10 +181,27 @@ async function saveCookie() {
   }
 }
 
+async function verifyCookie() {
+  verifying.value = true
+  verifyMsg.value = ''
+  try {
+    // 先保存再验证，保证服务端用的是当前输入
+    await douyinAPI.setConfig(cookieInput.value.trim(), uaInput.value.trim())
+    const res: any = await douyinAPI.verify()
+    verifyOk.value = !!res.data?.ok
+    verifyMsg.value = res.data?.detail || (verifyOk.value ? 'Cookie 有效' : 'Cookie 无效')
+  } catch (e: any) {
+    verifyOk.value = false
+    verifyMsg.value = e?.response?.data?.detail || '验证失败'
+  } finally {
+    verifying.value = false
+  }
+}
+
 onMounted(async () => {
   try {
-    const res = await douyinAPI.config()
-    if (res.data?.has_cookie) cookieInput.value = ''
+    const res: any = await douyinAPI.config()
+    uaInput.value = res.data?.user_agent || ''
   } catch { /* ignore */ }
 })
 </script>
@@ -197,5 +231,12 @@ onMounted(async () => {
 .img-dl { position: absolute; right: 8px; bottom: 8px; width: 30px; height: 30px; border-radius: 50%; border: none; background: rgba(0,0,0,0.55); color: #fff; cursor: pointer; font-size: 15px; line-height: 1; }
 .img-dl:hover { background: var(--n-primary-color); }
 
-.cookie-hint { font-size: 12px; color: #888; margin-bottom: 12px; line-height: 1.6; }
+.cookie-hint { font-size: 13px; color: #999; margin-bottom: 12px; line-height: 1.7; }
+.cookie-steps { margin: 8px 0 8px 18px; padding: 0; }
+.cookie-steps li { margin-bottom: 4px; }
+.cookie-hint code { background: rgba(128,128,128,0.18); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+.cookie-keys { font-size: 12px; color: #7a7a7a; }
+.field-label { font-size: 13px; color: #999; margin-bottom: 6px; }
+.verify-msg { margin-top: 12px; font-size: 13px; color: #e88080; line-height: 1.6; }
+.verify-msg.ok { color: #5fbf7f; }
 </style>

@@ -45,6 +45,12 @@ class DownloadAllRequest(BaseModel):
 
 class ConfigRequest(BaseModel):
     cookie: str = ""
+    user_agent: str = ""
+
+
+# Cookie 有效性判定所需的关键字段（抖音风控链）
+_REQUIRED_COOKIE_KEYS = ("ttwid",)
+_STRONG_COOKIE_KEYS = ("uifid", "UIFID", "msToken", "__ac_signature", "s_v_web_id")
 
 
 def _media_headers() -> dict:
@@ -161,10 +167,59 @@ async def download_all(req: DownloadAllRequest):
 
 @router.get("/config")
 async def get_config():
-    return {"code": 0, "data": {"has_cookie": bool(get_config_value("douyin_cookie"))}}
+    cookie = (get_config_value("douyin_cookie") or "").strip()
+    return {"code": 0, "data": {
+        "has_cookie": bool(cookie),
+        "has_uifid": _has_any(cookie, _STRONG_COOKIE_KEYS),
+        "user_agent": get_config_value("douyin_ua") or "",
+    }}
 
 
 @router.post("/config")
 async def set_config(req: ConfigRequest):
-    set_config_value("douyin_cookie", (req.cookie or "").strip())
-    return {"code": 0, "data": {"has_cookie": bool(req.cookie.strip())}}
+    cookie = (req.cookie or "").strip()
+    set_config_value("douyin_cookie", cookie)
+    set_config_value("douyin_ua", (req.user_agent or "").strip())
+    return {"code": 0, "data": {
+        "has_cookie": bool(cookie),
+        "has_uifid": _has_any(cookie, _STRONG_COOKIE_KEYS),
+    }}
+
+
+@router.post("/verify")
+async def verify_cookie():
+    """用当前 Cookie 做一次真实探测，判断是否已越过 uifid 风控。
+
+    探测方式：对 detail API 发一次带 a_bogus 签名的请求，看是否还返回 403。
+    """
+    from .parser import UA_DESKTOP
+    from .resolver import _ensure_ttwid, _try_web_api
+
+    cookie = (get_config_value("douyin_cookie") or "").strip()
+    if not cookie:
+        raise HTTPException(400, "尚未配置 Cookie")
+    if not _has_any(cookie, _REQUIRED_COOKIE_KEYS):
+        raise HTTPException(400, "Cookie 缺少 ttwid 字段，请复制完整 Cookie")
+
+    import httpx as _httpx
+    kwargs = {}
+    proxy = get_proxy_with_detect()
+    if proxy:
+        kwargs["proxy"] = proxy
+    async with _httpx.AsyncClient(follow_redirects=True, verify=False,
+                                  timeout=25.0, **kwargs) as client:
+        await _ensure_ttwid(client)
+        # 用一个稳定存在的公开作品 ID 探测（不存在也无妨：能过风控就会返回业务错误而非 403）
+        info = await _try_web_api("7531200000000000000", client)
+    if info is not None:
+        return {"code": 0, "data": {"ok": True, "detail": "Cookie 有效，已越过风控"}}
+    return {"code": 1, "data": {
+        "ok": False,
+        "detail": "Cookie 未生效：仍被 uifid 风控拦截。请确认复制的是 www.douyin.com 的完整 Cookie"
+                  "（含 uifid），并填写与该浏览器一致的 User-Agent",
+    }}
+
+
+def _has_any(cookie: str, keys) -> bool:
+    low = (cookie or "").lower()
+    return any(k.lower() in low for k in keys)

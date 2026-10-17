@@ -16,6 +16,7 @@ from spider.proxy_config import get_config_value, get_proxy_with_detect
 from .link import extract_url, parse_aweme_id
 from .parser import (
     REFERER,
+    UA_DESKTOP,
     UA_MOBILE,
     DouyinError,
     no_watermark,
@@ -54,10 +55,22 @@ def _issue(url: str, kind: str, filename: str) -> str:
     return _put(token, (url, kind, filename, time.monotonic() + _LINK_TTL))
 
 
-def _headers(extra: dict | None = None) -> dict:
-    h = {"User-Agent": UA_MOBILE, "Referer": REFERER,
+def _cfg_cookie() -> str:
+    return (get_config_value("douyin_cookie") or "").strip()
+
+
+def _cfg_ua(default: str) -> str:
+    """UA 配置：a_bogus 签名与 Cookie 都绑定 UA，二者必须来自同一浏览器。
+
+    用户在「风控 Cookie」里粘贴浏览器 Cookie 时，若同时填了 UA，则全链路统一使用。
+    """
+    return (get_config_value("douyin_ua") or "").strip() or default
+
+
+def _headers(extra: dict | None = None, ua: str | None = None) -> dict:
+    h = {"User-Agent": ua or _cfg_ua(UA_MOBILE), "Referer": REFERER,
          "Accept-Language": "zh-CN,zh;q=0.9"}
-    cookie = (get_config_value("douyin_cookie") or "").strip()
+    cookie = _cfg_cookie()
     if cookie:
         h["Cookie"] = cookie
     h.update(extra or {})
