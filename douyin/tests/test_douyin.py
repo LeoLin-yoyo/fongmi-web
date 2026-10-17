@@ -122,9 +122,21 @@ def test_find_aweme_direct():
 
 
 def test_parse_page_dead_video():
+    """页面有作品结构但 videoInfoRes 为 None → 判为不存在/私密。"""
     payload = {"loaderData": {"video_(id)/page": None}}
+    html = _router_html(payload)
+    # 该形态没有 videoInfoRes，属于「平台未返回数据」而非「作品不存在」
+    with pytest.raises(DouyinError, match="风控|Cookie|未返回作品数据"):
+        parse_page(html)
+
+
+def test_parse_page_dead_video_with_marker():
+    """页面明确带 videoInfoRes 且为空 → 判为作品不存在。"""
+    html = ('<html><script>window._ROUTER_DATA = {"loaderData":'
+            '{"video_(id)/page":{"videoInfoRes":null}}};</script>'
+            '<i>videoInfoRes</i></html>')
     with pytest.raises(DouyinError, match="不存在|已删除|私密"):
-        parse_page(_router_html(payload))
+        parse_page(html)
 
 
 def test_parse_page_no_data():
@@ -133,7 +145,8 @@ def test_parse_page_no_data():
 
 
 def test_parse_page_unknown_type():
-    payload = {"loaderData": {"x": {"desc": "只有标题"}}}
+    """有作品数据但既无视频也无图集 → 未能识别类型。"""
+    payload = {"loaderData": {"x": {"desc": "只有标题", "videoInfoRes": {"item_list": [{"desc": "只有标题"}]}}}}
     with pytest.raises(DouyinError, match="未能识别作品类型"):
         parse_page(_router_html(payload))
 

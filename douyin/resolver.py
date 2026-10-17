@@ -88,7 +88,13 @@ async def resolve_aweme_id(url: str, client: httpx.AsyncClient) -> str:
 
 
 async def fetch_share_page(aweme_id: str, client: httpx.AsyncClient) -> str:
-    """抓分享页 HTML（视频/图集/笔记三种形态逐个尝试）。"""
+    """抓分享页 HTML（视频/图集/笔记三种形态逐个尝试）。
+
+    抖音对匿名请求会返回「空壳页」（HTTP 200 但无 videoInfoRes），
+    因此以「页面是否真的带回作品数据」作为成功判据。
+    """
+    from .parser import has_aweme_data
+
     last = ""
     for page in share_page_candidates(aweme_id):
         for attempt in range(3):
@@ -96,16 +102,15 @@ async def fetch_share_page(aweme_id: str, client: httpx.AsyncClient) -> str:
                 resp = await client.get(page, headers=_headers())
                 if resp.status_code == 200 and resp.text:
                     last = resp.text
-                    # 页面里出现 _ROUTER_DATA 或 RENDER_DATA 才算拿到有效数据
-                    if "_ROUTER_DATA" in last or 'id="RENDER_DATA"' in last:
+                    if has_aweme_data(last):
                         return last
-                    break
+                    break  # 空壳页：换下一种形态，不必重试同一地址
             except httpx.HTTPError as e:
                 last = ""
                 logger.debug(f"抖音分享页请求失败 {page}: {e}")
             await asyncio.sleep(1.0 * (attempt + 1))
     if last:
-        return last  # 交给 parse_page 判断是否为「作品不存在」
+        return last  # 交给 parse_page 区分「风控空壳」与「作品不存在」
     raise DouyinError("抓取分享页失败（请检查网络或代理）")
 
 

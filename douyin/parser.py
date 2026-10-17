@@ -227,15 +227,27 @@ def looks_dead(data) -> bool:
     return False
 
 
+def has_aweme_data(html: str) -> bool:
+    """分享页是否真的带回了作品数据（用于区分「空壳页」与「作品不存在」）。"""
+    return bool(html) and "videoInfoRes" in html
+
+
+
 def parse_page(html: str) -> dict:
     """完整流程：HTML → 作品信息。失败抛 DouyinError。"""
     data = extract_page_json(html)
     if not data:
-        raise DouyinError("页面未包含数据（可能被风控拦截，或链接已失效）")
+        raise DouyinError(
+            "页面未包含数据：抖音可能已收紧匿名访问，请在「风控 Cookie」中粘贴浏览器 Cookie 后重试")
     info = parse_aweme(data)
-    if info["type"] == "unknown" and looks_dead(data):
-        raise DouyinError("该作品不存在、已删除，或为私密/地区限制内容")
     if info["type"] == "unknown":
+        # 关键区分：页面根本没有作品数据（平台收紧/风控） vs 作品确实不存在
+        if not has_aweme_data(html):
+            raise DouyinError(
+                "抖音未返回作品数据（平台风控）：请到「风控 Cookie」粘贴浏览器 Cookie 后重试；"
+                "若仍失败，说明当前平台策略已限制匿名解析")
+        if looks_dead(data):
+            raise DouyinError("该作品不存在、已删除，或为私密/地区限制内容")
         raise DouyinError("未能识别作品类型（视频或图集）")
     return info
 
