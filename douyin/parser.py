@@ -26,6 +26,12 @@ class DouyinError(Exception):
     """抖音解析错误。"""
 
 
+# 统一的风控提示：抖音 2026 起对匿名请求要求浏览器 JS 生成的 uifid
+_BLOCKED_HINT = (
+    "抖音风控拦截：需要浏览器环境生成的 uifid，当前纯 HTTP 签名不足。"
+    "请在「风控 Cookie」中粘贴完整浏览器 Cookie（含 uifid）后重试")
+
+
 # ---------- 页面 JSON 提取 ----------
 
 _ROUTER_MARK = "window._ROUTER_DATA"
@@ -228,8 +234,26 @@ def looks_dead(data) -> bool:
 
 
 def has_aweme_data(html: str) -> bool:
-    """分享页是否真的带回了作品数据（用于区分「空壳页」与「作品不存在」）。"""
-    return bool(html) and "videoInfoRes" in html
+    """分享页是否真的带回了作品数据。
+
+    注意：抖音空壳页里也会出现 `videoInfoRes` 字样（键名存在但值为 null，
+    或出现在其他 layout 分支），所以必须检查是否存在非空的 item_list。
+    """
+    if not html or "videoInfoRes" not in html:
+        return False
+    data = extract_page_json(html)
+    if not data:
+        return False
+    loader = data.get("loaderData")
+    if not isinstance(loader, dict):
+        return False
+    for key, val in loader.items():
+        if not isinstance(val, dict):
+            continue
+        res = val.get("videoInfoRes")
+        if isinstance(res, dict) and res.get("item_list"):
+            return True
+    return False
 
 
 
@@ -237,15 +261,12 @@ def parse_page(html: str) -> dict:
     """完整流程：HTML → 作品信息。失败抛 DouyinError。"""
     data = extract_page_json(html)
     if not data:
-        raise DouyinError(
-            "页面未包含数据：抖音可能已收紧匿名访问，请在「风控 Cookie」中粘贴浏览器 Cookie 后重试")
+        raise DouyinError(_BLOCKED_HINT)
     info = parse_aweme(data)
     if info["type"] == "unknown":
         # 关键区分：页面根本没有作品数据（平台收紧/风控） vs 作品确实不存在
         if not has_aweme_data(html):
-            raise DouyinError(
-                "抖音未返回作品数据（平台风控）：请到「风控 Cookie」粘贴浏览器 Cookie 后重试；"
-                "若仍失败，说明当前平台策略已限制匿名解析")
+            raise DouyinError(_BLOCKED_HINT)
         if looks_dead(data):
             raise DouyinError("该作品不存在、已删除，或为私密/地区限制内容")
         raise DouyinError("未能识别作品类型（视频或图集）")

@@ -126,21 +126,28 @@ def test_parse_page_dead_video():
     payload = {"loaderData": {"video_(id)/page": None}}
     html = _router_html(payload)
     # 该形态没有 videoInfoRes，属于「平台未返回数据」而非「作品不存在」
-    with pytest.raises(DouyinError, match="风控|Cookie|未返回作品数据"):
+    with pytest.raises(DouyinError, match="风控|Cookie|uifid"):
         parse_page(html)
 
 
 def test_parse_page_dead_video_with_marker():
-    """页面明确带 videoInfoRes 且为空 → 判为作品不存在。"""
+    """item_list 为空 → 属于「平台未返回作品数据」，走风控提示。"""
     html = ('<html><script>window._ROUTER_DATA = {"loaderData":'
-            '{"video_(id)/page":{"videoInfoRes":null}}};</script>'
-            '<i>videoInfoRes</i></html>')
-    with pytest.raises(DouyinError, match="不存在|已删除|私密"):
+            '{"video_(id)/page":{"videoInfoRes":{"item_list":[]}}}};</script></html>')
+    with pytest.raises(DouyinError, match="风控|uifid|Cookie"):
+        parse_page(html)
+
+
+def test_parse_page_dead_video_null_res():
+    """videoInfoRes 为 null 且无 item_list → 风控提示。"""
+    html = ('<html><script>window._ROUTER_DATA = {"loaderData":'
+            '{"video_(id)/page":{"videoInfoRes":null}}};</script></html>')
+    with pytest.raises(DouyinError, match="风控|uifid|Cookie"):
         parse_page(html)
 
 
 def test_parse_page_no_data():
-    with pytest.raises(DouyinError, match="未包含数据"):
+    with pytest.raises(DouyinError, match="风控|Cookie|uifid"):
         parse_page("<html><body>blocked</body></html>")
 
 
@@ -199,3 +206,43 @@ def test_api_config_roundtrip(client, monkeypatch):
     assert client.post("/api/douyin/config", json={"cookie": "abc=1"}).status_code == 200
     assert store["v"] == "abc=1"
     assert client.get("/api/douyin/config").json()["data"]["has_cookie"] is True
+
+
+# ---------- SM3（国密标准测试向量） ----------
+
+def test_sm3_standard_vectors():
+    from douyin.sm3 import sm3_hash
+    # GB/T 32905-2016 附录 A
+    assert sm3_hash(b"abc") == \
+        "66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0"
+    assert sm3_hash(b"abcd" * 16) == \
+        "debe9ff92275b8a138604889c18e5a4d6fdb70e5387e5765293dcba39c0c5732"
+
+
+# ---------- a_bogus 签名 ----------
+
+def test_abogus_generates():
+    from douyin.abogus import ABogus
+    ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0 Safari/537.36"
+    sig = ABogus(ua).get_value("aweme_id=123&aid=6383", "GET")
+    assert isinstance(sig, str) and len(sig) > 60
+    # 只应包含自定义字母表内的字符
+    from douyin.abogus import _ALPHABET
+    assert all(ch in _ALPHABET for ch in sig)
+
+
+def test_abogus_deterministic_shape():
+    """同一 UA 多次签名长度稳定（内容含时间戳，故值不同）。"""
+    from douyin.abogus import ABogus
+    ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0"
+    ab = ABogus(ua)
+    a = ab.get_value("x=1", "GET", start_time=1700000000000, end_time=1700000000005)
+    b = ab.get_value("x=1", "GET", start_time=1700000000000, end_time=1700000000005)
+    assert len(a) == len(b)
+
+
+def test_abogus_sign_query():
+    from douyin.abogus import sign_query
+    out = sign_query("a=1&b=2", "Mozilla/5.0")
+    assert out.startswith("a=1&b=2&a_bogus=")
+    assert "%2F" in out or "%2B" in out or "%3D" in out  # 已 URL 编码

@@ -72,6 +72,26 @@ def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(**kwargs)
 
 
+async def _ensure_ttwid(client: httpx.AsyncClient) -> str:
+    """获取 ttwid（抖音风控基础 cookie）。返回当前 cookie 串。"""
+    try:
+        await client.post(
+            "https://ttwid.bytedance.com/ttwid/union/register/",
+            json={"region": "cn", "aid": 1768, "needFid": False,
+                  "service": "www.ixigua.com",
+                  "migrate_info": {"ticket": "", "source": "node"},
+                  "cbUrlProtocol": "https", "union": True},
+            headers={"User-Agent": UA_MOBILE, "Content-Type": "application/json"},
+        )
+    except httpx.HTTPError as e:
+        logger.debug(f"ttwid 获取失败: {e}")
+    cookie = (get_config_value("douyin_cookie") or "").strip()
+    jar = "; ".join(f"{k}={v}" for k, v in client.cookies.items())
+    if cookie and jar:
+        return f"{cookie}; {jar}"
+    return cookie or jar
+
+
 async def resolve_aweme_id(url: str, client: httpx.AsyncClient) -> str:
     """从链接解析 aweme_id（短链跟随重定向）。"""
     direct = parse_aweme_id(url)
@@ -121,8 +141,13 @@ async def resolve(text: str) -> dict:
         raise DouyinError("未找到抖音链接")
     async with _client() as client:
         aweme_id = await resolve_aweme_id(url, client)
-        html = await fetch_share_page(aweme_id, client)
-    info = parse_page(html)
+        await _ensure_ttwid(client)
+        # 路径 1：Web detail API（a_bogus 签名）
+        info = await _try_web_api(aweme_id, client)
+        # 路径 2：分享页 SSR 数据
+        if info is None:
+            html = await fetch_share_page(aweme_id, client)
+            info = parse_page(html)
     info["aweme_id"] = info.get("aweme_id") or aweme_id
 
     out = {
@@ -139,8 +164,7 @@ async def resolve(text: str) -> dict:
         out["video"] = {"token": token, "stream_path": f"/api/douyin/stream/{token}",
                         "playable": True, "filename": f"{name}.mp4"}
     for i, img in enumerate(info["images"], 1):
-        ext = ".jpg"
-        token = _issue(img, "image", f"{info['aweme_id']}_{i:02d}{ext}")
+        token = _issue(img, "image", f"{info['aweme_id']}_{i:02d}.jpg")
         out["images"].append({"token": token, "path": f"/api/douyin/stream/{token}",
                               "index": i})
     if info["cover_url"]:
@@ -150,3 +174,64 @@ async def resolve(text: str) -> dict:
         token = _issue(info["music_url"], "audio", f"{info['aweme_id']}.mp3")
         out["music"] = {"token": token, "path": f"/api/douyin/stream/{token}"}
     return out
+
+
+async def _try_web_api(aweme_id: str, client: httpx.AsyncClient) -> dict | None:
+    """尝试 Web detail API（带 a_bogus 签名）。失败返回 None 交给 SSR 路径。"""
+    from .parser import UA_DESKTOP, parse_aweme
+
+    try:
+        from .abogus import ABogus
+    except Exception:
+        return None
+
+    from urllib.parse import urlencode
+    params = {
+        "device_platform": "webapp", "aid": "6383", "channel": "channel_pc_web",
+        "aweme_id": aweme_id, "pc_client_type": "1", "version_code": "190500",
+        "version_name": "19.5.0", "cookie_enabled": "true", "platform": "PC",
+        "browser_name": "Chrome", "browser_version": "131.0.0.0",
+        "browser_language": "zh-CN", "browser_platform": "Win32",
+        "browser_online": "true", "engine_name": "Blink", "engine_version": "131.0.0.0",
+        "os_name": "Windows", "os_version": "10", "cpu_core_num": "12",
+        "device_memory": "8", "screen_width": "1920", "screen_height": "1080",
+    }
+    query = urlencode(params)
+    try:
+        sig = ABogus(UA_DESKTOP).get_value(query, "GET")
+    except Exception as e:
+        logger.debug(f"a_bogus 生成失败: {e}")
+        return None
+
+    url = f"https://www.douyin.com/aweme/v1/web/aweme/detail/?{query}&a_bogus={sig}"
+    headers = {
+        "User-Agent": UA_DESKTOP,
+        "Referer": f"https://www.douyin.com/video/{aweme_id}",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+    }
+    cookie = (get_config_value("douyin_cookie") or "").strip()
+    jar = "; ".join(f"{k}={v}" for k, v in client.cookies.items())
+    if cookie and jar:
+        headers["Cookie"] = f"{cookie}; {jar}"
+    elif cookie or jar:
+        headers["Cookie"] = cookie or jar
+    try:
+        resp = await client.get(url, headers=headers)
+    except httpx.HTTPError as e:
+        logger.debug(f"抖音 detail API 请求失败: {e}")
+        return None
+    if resp.status_code != 200:
+        logger.debug(f"抖音 detail API HTTP {resp.status_code}: {resp.text[:120]}")
+        return None
+    try:
+        data = resp.json()
+    except Exception:
+        return None
+    detail = data.get("aweme_detail")
+    if not isinstance(detail, dict):
+        logger.debug(f"抖音 detail API 无 aweme_detail: {resp.text[:120]}")
+        return None
+    info = parse_aweme({"aweme": detail})
+    # API 返回了 aweme_detail 但取不到视频/图集地址（可能是审核/地区限制）
+    return info if info.get("type") != "unknown" else None
