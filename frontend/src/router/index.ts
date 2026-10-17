@@ -11,6 +11,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/play', name: 'Play', component: () => import('@/views/PlayPage.vue') },
   { path: '/live', name: 'Live', component: () => import('@/views/LivePage.vue') },
   { path: '/pan', name: 'Pan', component: () => import('@/views/PanPage.vue') },
+  { path: '/douyin', name: 'Douyin', component: () => import('@/views/DouyinPage.vue') },
   { path: '/tg', name: 'Tg', component: () => import('@/views/TgPage.vue') },
   { path: '/downloads', name: 'Downloads', component: () => import('@/views/DownloadsPage.vue') },
   { path: '/history', name: 'History', component: () => import('@/views/HistoryPage.vue') },

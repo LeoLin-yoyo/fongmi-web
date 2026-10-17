@@ -64,6 +64,13 @@ FastAPI × Vue 3 全栈实现 · 点播聚合 · IPTV 直播 · 弹幕字幕 · 
 - 聚合搜索一次跑遍「点播站点 + 我的 TG 频道 + 我的网盘资源」，虚拟源以独立 Tab 呈现
 - 点击资源结果进入资源详情页，直接在线播放或加入下载
 
+### 抖音解析（Douyin）
+- 粘贴分享链接或整段分享文案，自动提取作品并解析
+- **无水印**视频直链（`playwm` → `play`），支持图集原图批量下载
+- 视频可在页面内直接播放；封面、背景音乐可单独下载
+- 可选「风控 Cookie」：遇到页面无数据时粘贴浏览器 Cookie 提高成功率
+- 复用统一下载引擎（分片并发 + 断点续传），下载完成自动进片库
+
 ### 直播（IPTV）
 - M3U / TXT 直播源自动解析，同名频道多线路自动合并
 - EPG 电子节目单
@@ -213,6 +220,12 @@ fongmi-web/
 │   ├── core.py             #   配置读取 + 会话令牌 + 限速 + 路径判定
 │   ├── api.py              #   登录/登出/状态/配置 接口
 │   └── tests/              #   pytest
+├── douyin/                 # 抖音解析（无水印视频 / 图集）
+│   ├── link.py             #   分享链接识别与作品 ID 提取
+│   ├── parser.py           #   分享页 JSON 提取 + 作品解析
+│   ├── resolver.py         #   解析编排 + 直链签发
+│   ├── api.py              #   解析/媒体代理/下载 接口
+│   └── tests/              #   pytest
 ├── downloader/             # 统一下载引擎（TG / 网盘 / 直链共用）
 │   ├── engine.py           #   Range 分片并发 + 断点续传
 │   ├── journal.py          #   .part sidecar 断点记录
@@ -246,7 +259,7 @@ fongmi-web/
 
 ```bash
 # 后端单元测试
-pytest api/tests local_video/tests pan/tests tg/tests downloader/tests resource_search/tests auth/tests
+pytest api/tests local_video/tests pan/tests tg/tests douyin/tests downloader/tests resource_search/tests auth/tests
 
 # 前端单元测试
 cd frontend && npm run test
@@ -332,6 +345,7 @@ python -m uvicorn main:app --host 0.0.0.0 --port 9000
 - [x] Telegram 解析/在线播放/下载（tdl 包壳）
 - [x] 资源索引 + 聚合搜索虚拟源（TG/网盘）
 - [x] 登录管控（配置文件驱动，账号密码可留空关闭）
+- [x] 抖音无水印解析（视频 / 图集）
 - [ ] Tauri 桌面壳打包（可选）
 - [ ] 弹幕在线匹配
 - [ ] 多语言界面

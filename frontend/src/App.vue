@@ -9,6 +9,7 @@
               <router-link to="/">首页</router-link>
               <router-link to="/live">直播</router-link>
               <router-link to="/pan">网盘</router-link>
+              <router-link to="/douyin">抖音</router-link>
               <router-link to="/tg">TG</router-link>
               <router-link to="/downloads">下载</router-link>
               <router-link to="/local">本地</router-link>
