@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from downloader import manager as dl_manager
 from downloader.config import get_download_dir
+from loguru import logger
 
 from . import tdlfetch
 from .config import get_config, save_config
@@ -22,13 +23,24 @@ from .link import extract_links, parse_tg_link, sanitize_link
 from .login import login_manager
 from .serve import serve_manager
 from .session import invalidate, list_chats
-from .stream import drop_streamers, get_streamer, parse_range
+from .stream import active_stream_keys, drop_streamers, get_streamer, parse_range
 
 router = APIRouter(prefix="/tg", tags=["tg"])
 
 # 播放会话：sid → {urls, files}
 _play_sessions: dict[str, dict] = {}
 _cur_play: dict = {"sid": ""}
+
+# 会话保活心跳：浏览器播放期间定期调 /tg/keepalive 续期，避免被判定空闲回收
+KEEPALIVE_TIMEOUT = 60.0
+
+
+def _is_playing(sid: str) -> bool:
+    """该会话是否有 streamer 在近期持续拉流（正在播放）。"""
+    for key in active_stream_keys(KEEPALIVE_TIMEOUT):
+        if key.startswith(f"{sid}:"):
+            return True
+    return False
 
 
 class PreviewRequest(BaseModel):
@@ -148,10 +160,15 @@ async def preview(req: PreviewRequest):
     except OSError as e:
         raise HTTPException(400, f"下载目录不可用: {e}")
 
-    # 替换上一个播放会话
-    if _cur_play.get("sid"):
-        await serve_manager.stop(_cur_play["sid"])
-        drop_streamers(_cur_play["sid"])
+    # 回收上一批会话：仍在播放的保留，其余（含前次 stop 后残留的）一并回收，
+    # 避免 _cur_play 只记一个 sid 时其它会话泄漏、tdl 进程与端口无限堆积
+    _cur_play["sid"] = ""
+    for old_sid in serve_manager.list_ids():
+        if _is_playing(old_sid):
+            logger.info(f"TG 会话 {old_sid} 仍在播放，保留不回收")
+            continue
+        await serve_manager.stop(old_sid)
+        drop_streamers(old_sid)
 
     try:
         sess = await serve_manager.start(links, out_dir)
@@ -175,6 +192,9 @@ async def session_state(sid: str):
 
 @router.post("/session/{sid}/stop")
 async def stop_session(sid: str):
+    """主动关闭会话。正在播放的会话拒绝关闭（避免误杀正在播放的流）。"""
+    if _is_playing(sid):
+        raise HTTPException(409, "该会话正在播放中，请先关闭播放页")
     await serve_manager.stop(sid)
     drop_streamers(sid)
     _play_sessions.pop(sid, None)
@@ -200,6 +220,9 @@ async def stream(sid: str, href: str, request: Request):
     total = file["size"]
     ctype = mime_of(file["name"])
     sess.touch()
+    _play_sessions.setdefault(sid, {"urls": [], "files": sess.files})
+    if not _is_playing(sid):
+        _cur_play["sid"] = sid
 
     if request.method == "HEAD":
         return StreamingResponse(
@@ -236,6 +259,16 @@ async def stream_stats(sid: str, href: str):
         raise HTTPException(404, "文件不存在")
     st = get_streamer(sess, href, file["size"])
     return {"code": 0, "data": st.stats()}
+
+
+@router.post("/keepalive/{sid}")
+async def keepalive(sid: str):
+    """播放页心跳：续期会话，避免被判定空闲回收。"""
+    sess = serve_manager.get(sid)
+    if not sess:
+        raise HTTPException(404, "会话不存在或已关闭")
+    sess.touch()
+    return {"code": 0, "data": {"sid": sid, "idle": round(sess.idle_seconds(), 1)}}
 
 
 @router.post("/download")

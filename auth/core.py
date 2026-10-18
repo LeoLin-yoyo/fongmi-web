@@ -21,6 +21,7 @@ import hmac
 import json
 import os
 import secrets
+import tempfile
 import time
 
 from spider.proxy_config import _CONFIG_PATH
@@ -86,13 +87,24 @@ def is_enabled() -> bool:
 
 
 def save_config(username: str, password: str) -> None:
-    """写入配置文件（用于设置页管理）；空账号密码表示关闭认证。"""
+    """写入配置文件（用于设置页管理）；空账号密码表示关闭认证。
+
+    落盘在 DATA_DIR 内固定文件名，与 _CONFIG_PATH 同目录；用临时文件 + rename 原子替换。
+    """
     os.makedirs(DATA_DIR, exist_ok=True)
     data = {"username": (username or "").strip(), "password": password or ""}
-    tmp = AUTH_FILE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, AUTH_FILE)
+    fd, tmp = tempfile.mkstemp(dir=DATA_DIR, prefix=".auth-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, AUTH_FILE)
+        tmp = None
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
     _cfg_cache["mtime"] = None  # 使缓存失效
 
 

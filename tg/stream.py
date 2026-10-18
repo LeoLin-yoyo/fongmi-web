@@ -63,6 +63,7 @@ class FileStreamer:
         self._window = max(1, self.cfg.stream_window_mb * 1024 * 1024 // BLOCK)
         self._pool = max(1, min(self.cfg.stream_connections, 64))
         self.cursor = 0
+        self.last_hit = time.time()
         self._prefetch_task: asyncio.Task | None = None
 
     def _block_len(self, idx: int) -> int:
@@ -136,7 +137,12 @@ class FileStreamer:
 
     def note_cursor(self, block_idx: int):
         self.cursor = block_idx
+        self.last_hit = time.time()
         self._schedule_prefetch()
+
+    def is_playing(self, timeout: float = 60.0) -> bool:
+        """最近 timeout 秒内是否仍有拉流动作（用于判断会话是否正在被播放）。"""
+        return time.time() - self.last_hit <= timeout
 
     def _schedule_prefetch(self):
         if self._prefetch_task and not self._prefetch_task.done():
@@ -187,6 +193,11 @@ class FileStreamer:
 
 
 _streamers: dict[str, FileStreamer] = {}
+
+
+def active_stream_keys(timeout: float = 60.0) -> set[str]:
+    """正在被播放（近期有拉流）的 streamer key 集合。"""
+    return {k for k, st in _streamers.items() if st.is_playing(timeout)}
 
 
 def get_streamer(sess: ServeSession, href: str, total: int) -> FileStreamer:

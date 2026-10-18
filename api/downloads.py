@@ -105,8 +105,8 @@ async def update_download_config(body: DirUpdate):
         try:
             os.makedirs(d, exist_ok=True)
             probe = os.path.join(d, ".fongmi_write_test")
-            with open(probe, "w") as f:
-                f.write("ok")
+            fd = os.open(probe, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            os.close(fd)
             os.unlink(probe)
         except OSError as e:
             raise HTTPException(400, f"目录不可写: {e}")

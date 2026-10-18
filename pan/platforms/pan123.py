@@ -7,8 +7,8 @@
 import base64
 import json
 import os
-import random
 import re
+import secrets
 import time
 import zlib
 from urllib.parse import quote, unquote
@@ -58,19 +58,26 @@ class Pan123Client(PanClient):
 
     @staticmethod
     def _load_or_make_device_id() -> str:
-        path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__)))), "data", ".secret", "pan123_device")
+        # 路径锚定在 <项目根>/data/.secret 下固定文件名，不接受外部输入
+        base = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "data", ".secret")
+        path = os.path.join(base, "pan123_device")
         try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
+            os.makedirs(base, exist_ok=True)
             if os.path.isfile(path):
                 val = open(path).read().strip()
                 if re.fullmatch(r"[0-9a-fA-F]{32}", val):
                     return val
         except OSError:
             pass
-        val = "".join(random.choice("0123456789abcdef") for _ in range(32))
+        val = "".join(secrets.choice("0123456789abcdef") for _ in range(32))
         try:
-            open(path, "w").write(val)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.write(fd, val.encode("ascii"))
+            finally:
+                os.close(fd)
         except OSError:
             pass
         return val
@@ -96,7 +103,7 @@ class Pan123Client(PanClient):
         raw = f"{gm.tm_year:04d}{gm.tm_mon:02d}{gm.tm_mday:02d}{gm.tm_hour:02d}{gm.tm_min:02d}"
         mapped = "".join(SIGN_TABLE[int(ch)] for ch in raw)
         auth_key = format(zlib.crc32(mapped.encode()) & 0xffffffff, "x")
-        rnd = random.randint(0, 9999999)
+        rnd = secrets.randbelow(10_000_000)
         data = f"{ts}|{rnd}|{path}|{SIGN_OS}|{SIGN_VER}|{auth_key}"
         auth_value = f"{ts}-{rnd}-{format(zlib.crc32(data.encode()) & 0xffffffff, 'x')}"
         return auth_key, auth_value

@@ -5,7 +5,6 @@
 设备头 did/dt/traceparent 必须带；业务码 207=需登录转存。
 """
 import os
-import random
 import secrets
 
 from ..base import PanClient
@@ -27,7 +26,7 @@ SHARE_DOWNLOAD = f"{API_BASE}/userres/v1/get_share_download_url"
 
 
 def _public_device_id() -> str:
-    return "".join(random.choice("0123456789abcdef") for _ in range(32))
+    return "".join(secrets.choice("0123456789abcdef") for _ in range(32))
 
 
 class GuangYaClient(PanClient):

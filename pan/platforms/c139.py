@@ -7,7 +7,7 @@ import base64
 import gzip
 import hashlib
 import json
-import random
+import secrets
 import string
 import time
 from datetime import datetime
@@ -32,7 +32,7 @@ PC_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 
 
 def _aes_encrypt(plaintext: str) -> str:
-    iv = bytes(random.getrandbits(8) for _ in range(16))
+    iv = secrets.token_bytes(16)
     cipher = AES.new(AES_KEY, AES.MODE_CBC, iv)
     ct = cipher.encrypt(pad(plaintext.encode("utf-8"), AES.block_size))
     return base64.b64encode(iv + ct).decode("ascii")
@@ -58,7 +58,7 @@ def _mcloud_sign(body_json: str) -> str:
     sorted_str = "".join(sorted(encoded))
     b64 = base64.b64encode(sorted_str.encode("utf-8")).decode("ascii")
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    rnd = "".join(random.choice(string.ascii_letters + string.digits) for _ in range(16))
+    rnd = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(16))
     res = hashlib.md5(b64.encode()).hexdigest() + hashlib.md5(f"{ts}:{rnd}".encode()).hexdigest()
     sign = hashlib.md5(res.encode()).hexdigest().upper()
     return f"{ts},{rnd},{sign}"

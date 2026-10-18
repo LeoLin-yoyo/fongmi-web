@@ -7,8 +7,8 @@ import asyncio
 import json
 import os
 import re
+import secrets
 import time
-import random
 from pathlib import Path
 
 import httpx
@@ -296,7 +296,7 @@ class FileDownloader:
                 if self.dead:
                     raise ServeDeadError(str(e)) from e
                 if attempt < BLOCK_RETRIES:
-                    await asyncio.sleep(RETRY_BASE_MS * attempt / 1000 + random.random() * 0.6)
+                    await asyncio.sleep(RETRY_BASE_MS * attempt / 1000 + secrets.SystemRandom().random() * 0.6)
         self.inflight.pop(idx, None)
         raise last_err or DownloadError("块下载失败")
 
@@ -313,8 +313,11 @@ class FileDownloader:
         """预分配 .part 为完整大小（稀疏文件），任意 offset 写入合法。"""
         part = journal.part_path(self.final)
         if not (os.path.isfile(part) and os.path.getsize(part) == self.total):
-            with open(part, "wb") as f:
-                f.truncate(self.total)
+            fd = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.ftruncate(fd, self.total)
+            finally:
+                os.close(fd)
 
     async def run(self) -> str:
         """下载并返回最终路径。断点续传透明；暂停/取消抛 PauseRequested/CancelRequested。"""

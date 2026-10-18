@@ -194,3 +194,203 @@ def test_sanitize_link_from_config_roundtrip():
     save_config({"ns": "myns", "connections": 12})
     cfg = get_config()
     assert cfg.ns == "myns" and cfg.connections == 12
+
+
+# ---------- 播放会话保活 / 防误杀 ----------
+
+def _clear_streamers():
+    from tg import stream
+    stream._streamers.clear()
+
+
+def _make_streamer(sid: str, href: str, last_hit: float):
+    from tg.stream import FileStreamer, _streamers
+    st = object.__new__(FileStreamer)
+    st.sid, st.href, st.last_hit = sid, href, last_hit
+    _streamers[f"{sid}:{href}"] = st
+    return st
+
+
+def test_is_playing_detects_active_streamer():
+    import time
+    from tg.api import _is_playing
+    _clear_streamers()
+    st = _make_streamer("sid1", "1/2", time.time() - 600)
+    assert _is_playing("sid1") is False
+    st.last_hit = time.time()
+    assert _is_playing("sid1") is True
+    _clear_streamers()
+
+
+def test_active_stream_keys_only_recent():
+    import time
+    from tg.stream import active_stream_keys
+    _clear_streamers()
+    _make_streamer("a", "1/1", time.time())
+    _make_streamer("b", "1/1", time.time() - 600)
+    keys = active_stream_keys(timeout=60.0)
+    assert "a:1/1" in keys and "b:1/1" not in keys
+    _clear_streamers()
+
+
+def test_reap_idle_skips_playing():
+    import asyncio
+    import time
+    from tg.serve import ServeManager, ServeSession
+    from tg.stream import FileStreamer
+    _clear_streamers()
+
+    mgr = ServeManager()
+    for sid, idle in (("idle", 600.0), ("busy", 600.0), ("fresh", 1.0)):
+        ss = object.__new__(ServeSession)
+        ss.sid, ss.port, ss.base, ss.dir = sid, 0, "", ""
+        ss.proc, ss.files, ss.state = None, [], "ready"
+        ss.last_used = time.time() - idle
+        mgr.sessions[sid] = ss
+    _make_streamer("busy", "1/1", time.time())
+
+    stopped = []
+
+    async def fake_stop(sid):
+        stopped.append(sid)
+        mgr.sessions.pop(sid, None)
+        return True
+    mgr.stop = fake_stop
+
+    reaped = asyncio.run(mgr.reap_idle(timeout=300.0))
+    assert "idle" in reaped and "busy" not in reaped and "fresh" not in reaped
+    assert set(stopped) == {"idle"}
+    _clear_streamers()
+
+
+def test_session_idle_seconds():
+    import time
+    from tg.serve import ServeSession
+    ss = object.__new__(ServeSession)
+    ss.last_used = time.time() - 42.0
+    assert 41.0 <= ss.idle_seconds() <= 43.0
+
+
+def test_stop_session_refused_while_playing():
+    """正在播放的会话不能被 stop 误杀（「重新解析」/「关闭会话」都走这里）。"""
+    import time
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from tg.api import _play_sessions, _cur_play, router
+    from tg.serve import ServeManager, ServeSession
+    import tg.api as tg_api
+    _clear_streamers()
+
+    mgr = ServeManager()
+    ss = object.__new__(ServeSession)
+    ss.sid, ss.port, ss.base, ss.dir = "play1", 0, "", ""
+    ss.proc, ss.files, ss.state = None, [], "ready"
+    ss.last_used = time.time()
+    mgr.sessions["play1"] = ss
+    tg_api._saved_mgr = tg_api.serve_manager
+    tg_api.serve_manager = mgr
+
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+    _make_streamer("play1", "1/1", __import__("time").time())
+
+    try:
+        _play_sessions["play1"] = {"urls": [], "files": []}
+        _cur_play["sid"] = "play1"
+        r = client.post("/tg/session/play1/stop")
+        assert r.status_code == 409
+        assert "播放" in r.json()["detail"]
+        assert mgr.get("play1") is not None, "播放中的会话必须保留"
+    finally:
+        tg_api.serve_manager = tg_api._saved_mgr
+        del tg_api._saved_mgr
+        _play_sessions.pop("play1", None)
+        _cur_play["sid"] = ""
+        _clear_streamers()
+
+
+def test_preview_keeps_playing_and_reaps_rest():
+    """preview 保留正在播放的会话，同时回收其它非播放会话（防泄漏）。"""
+    import time
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from tg.api import _play_sessions, _cur_play, router
+    from tg.serve import ServeManager, ServeSession
+    import tg.api as tg_api
+    _clear_streamers()
+
+    mgr = ServeManager()
+    for sid in ("playing", "stale"):
+        ss = object.__new__(ServeSession)
+        ss.sid, ss.port, ss.base, ss.dir = sid, 0, "", ""
+        ss.proc, ss.files, ss.state = None, [], "ready"
+        ss.last_used = time.time() - 600.0
+        mgr.sessions[sid] = ss
+    tg_api.serve_manager, tg_api._saved_mgr = mgr, tg_api.serve_manager
+
+    async def fake_stop(sid):
+        mgr.sessions.pop(sid, None)
+        return True
+    mgr.stop = fake_stop
+
+    async def fake_start(self, urls, out_dir, sid=""):
+        ss = object.__new__(ServeSession)
+        ss.sid, ss.port, ss.base, ss.dir = "newone", 0, "", ""
+        ss.proc, ss.files, ss.state, ss.error = None, [], "ready", ""
+        ss.last_used = time.time()
+        mgr.sessions["newone"] = ss
+        return ss
+    mgr.start = lambda urls, out_dir, sid="": fake_start(mgr, urls, out_dir, sid)
+
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+    try:
+        _play_sessions["playing"] = {"urls": [], "files": []}
+        _cur_play["sid"] = "stale"          # 前一次 stop 后残留的 sid
+        _make_streamer("playing", "1/1", time.time())
+        r = client.post("/tg/preview", json={"urls": "https://t.me/c/123/45"})
+        assert r.status_code == 200, r.text
+        assert mgr.get("playing") is not None, "播放中的会话不被回收"
+        assert mgr.get("stale") is None, "非播放会话应被回收"
+        assert mgr.get("newone") is not None
+        assert _cur_play["sid"] == "newone"
+    finally:
+        tg_api.serve_manager = tg_api._saved_mgr
+        del tg_api._saved_mgr
+        _play_sessions.clear()
+        _cur_play["sid"] = ""
+        _clear_streamers()
+
+
+def test_keepalive_endpoint():
+    """keepalive 对存在的会话续期并返回 idle；对已关闭的会话返回 404。"""
+    import time
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from tg.api import router
+    from tg.serve import ServeManager, ServeSession
+    import tg.api as tg_api
+
+    mgr = ServeManager()
+    ss = object.__new__(ServeSession)
+    ss.sid, ss.port, ss.base, ss.dir = "ka1", 0, "", ""
+    ss.proc, ss.files, ss.state = None, [], "ready"
+    ss.last_used = time.time() - 120.0
+    mgr.sessions["ka1"] = ss
+    tg_api._saved_mgr = tg_api.serve_manager
+    tg_api.serve_manager = mgr
+
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+    try:
+        r = client.post("/tg/keepalive/ka1")
+        assert r.status_code == 200
+        assert r.json()["data"]["sid"] == "ka1"
+        assert ss.idle_seconds() < 5.0, "keepalive 必须续期 last_used"
+        assert client.post("/tg/keepalive/nosuch").status_code == 404
+    finally:
+        tg_api.serve_manager = tg_api._saved_mgr
+        del tg_api._saved_mgr

@@ -6,7 +6,7 @@
 ⚠️ 该算法跟随抖音前端 JS 变化。若接口返回空/验证码，说明算法已更新，
 需要从最新 JS 重新校正 `_ARGUMENTS` / `_BROWSER` / `_REG` 等常量。
 """
-import random
+import secrets
 import time
 
 from .sm3 import sm3_hash
@@ -56,7 +56,7 @@ def _char_code_at(text: str) -> list[int]:
 
 
 def _random_list(r=None, a=170, b=85, d=0, e=0, f=0, g=0) -> list[int]:
-    r = r if r is not None else random.random() * 10000
+    r = r if r is not None else secrets.SystemRandom().random() * 10000
     v = [r, int(r) & 255, int(r) >> 8]
     v.append(v[1] & b | d)
     v.append(v[1] & a | e)
@@ -147,7 +147,7 @@ class ABogus:
                   start_time: int = 0, end_time: int = 0) -> str:
         """计算 a_bogus（未做 URL 编码）。params 为 query 串（不含 a_bogus）。"""
         start_time = start_time or int(time.time() * 1000)
-        end_time = end_time or (start_time + random.randint(4, 8))
+        end_time = end_time or (start_time + secrets.randbelow(5) + 4)
         arr = self._string2_list(params, method, start_time, end_time)
         check = _end_check_num(arr)
         arr.extend(self.browser_code)

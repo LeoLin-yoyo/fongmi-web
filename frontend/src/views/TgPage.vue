@@ -279,8 +279,18 @@ async function doPreview() {
 
 async function stopSession() {
   if (!session.value) return
-  try { await tgAPI.stop(session.value.sid) } catch { /* ignore */ }
-  session.value = null
+  try {
+    await tgAPI.stop(session.value.sid)
+    session.value = null
+  } catch (e: any) {
+    // 会话仍在播放中（后端 409 保护）：保留会话，提示用户先关播放页
+    const detail = e?.response?.data?.detail || ''
+    if (detail.includes('播放')) {
+      message.warning('该会话正在播放中，请先关闭播放页')
+    } else {
+      session.value = null
+    }
+  }
 }
 
 function backToInput() {

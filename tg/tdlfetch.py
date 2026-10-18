@@ -98,7 +98,8 @@ async def download_latest(on_progress=None) -> dict:
                     cur = urljoin(cur, loc)
                     continue
                 r.raise_for_status()
-                with open(archive, "wb") as f:
+                fd = os.open(archive, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "wb") as f:
                     async for chunk in r.aiter_bytes(256 * 1024):
                         total += len(chunk)
                         if total > MAX_BYTES:

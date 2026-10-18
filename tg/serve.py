@@ -68,6 +68,9 @@ class ServeSession:
     def touch(self):
         self.last_used = time.time()
 
+    def idle_seconds(self) -> float:
+        return time.time() - self.last_used
+
     async def local_request(self, path: str, method: str = "GET", headers: dict | None = None,
                             timeout: float = 30, stream: bool = False):
         """loopback 安全请求：host 硬编码、path 已校验。空路径（索引页）单独放行。"""
@@ -255,9 +258,33 @@ class ServeManager:
     def get(self, sid: str) -> ServeSession | None:
         return self.sessions.get(sid)
 
+    def list_ids(self) -> list[str]:
+        return list(self.sessions.keys())
+
     def list(self) -> list[dict]:
-        return [{"sid": s.sid, "state": s.state, "count": len(s.files), "dir": s.dir}
+        return [{"sid": s.sid, "state": s.state, "count": len(s.files), "dir": s.dir,
+                 "idle": round(s.idle_seconds(), 1)}
                 for s in self.sessions.values()]
+
+    async def reap_idle(self, timeout: float) -> "list[str]":
+        """回收空闲超过 timeout 的会话，返回被回收的 sid 列表。
+
+        只回收 ready 会话且确实没有在播放（streamer 侧以心跳为准，见 keepalive）。
+        """
+        from .stream import active_stream_keys
+        live = active_stream_keys()
+        reaped = []
+        for sid in list(self.sessions.keys()):
+            sess = self.sessions.get(sid)
+            if not sess or sess.state != "ready":
+                continue
+            if any(k.startswith(f"{sid}:") for k in live):
+                continue
+            if sess.idle_seconds() <= timeout:
+                continue
+            await self.stop(sid)
+            reaped.append(sid)
+        return reaped
 
 
 def _ext_pair(csv: str) -> str:

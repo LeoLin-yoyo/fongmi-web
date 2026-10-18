@@ -17,6 +17,17 @@
           <span class="buffering-text" v-if="downloadSpeed">{{ downloadSpeed }}</span>
         </div>
 
+        <div v-if="sessionLost" class="session-lost-overlay">
+          <div class="session-lost-card">
+            <div class="session-lost-title">播放会话已失效</div>
+            <div class="session-lost-desc">该视频的来源会话已被关闭或超时回收，重试即可恢复。</div>
+            <div class="session-lost-actions">
+              <n-button size="small" type="primary" @click.stop="reloadPlayer">重新连接</n-button>
+              <n-button size="small" quaternary @click.stop="closePage">关闭页面</n-button>
+            </div>
+          </div>
+        </div>
+
         <div v-if="showControls" class="player-controls" @click.stop>
           <div ref="progressBoxRef" class="controls-progress" :class="{ dragging: uiSeeking }"
             @mousedown.stop.prevent="onProgressDown" @click.stop>
@@ -108,6 +119,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import { NButton } from 'naive-ui'
 import { usePlayer } from '@/composables/usePlayer'
+import { tgAPI } from '@/api/tg'
 
 const route = useRoute()
 const {
@@ -128,6 +140,40 @@ const {
 const showSpeedMenu = ref(false)
 const showQualityMenu = ref(false)
 const showSubtitleMenu = ref(false)
+
+// TG 会话保活与失效恢复
+const tgSid = ref('')
+const sessionLost = ref(false)
+let heartbeat: number | undefined
+
+function captureSid() {
+  // 只从 TG 流地址提取 sid；sid 为 hex，避免误匹配普通直链
+  const url = route.query.url as string
+  const m = url && url.match(/^\/api\/tg\/stream\/([0-9a-f]{4,64})\//)
+  if (m) tgSid.value = m[1]
+}
+
+async function beat() {
+  if (!tgSid.value) return
+  try {
+    await tgAPI.keepalive(tgSid.value)
+  } catch {
+    sessionLost.value = true
+  }
+}
+
+function reloadPlayer() {
+  const url = route.query.url as string
+  if (url && videoRef.value) {
+    setupVideoEvents()
+    initPlayer(url)
+    sessionLost.value = false
+  }
+}
+
+function closePage() {
+  window.close()
+}
 
 const currentResLabel = computed(() => {
   if (currentResolution.value === -1) return '自动'
@@ -179,10 +225,13 @@ onMounted(() => {
   setupVideoEvents()
   initPlayer(url)
   setupKeyboardShortcuts()
+  captureSid()
+  if (tgSid.value) heartbeat = window.setInterval(beat, 30000)
 })
 
 onBeforeUnmount(() => {
   removeKeyboardShortcuts()
+  if (heartbeat) window.clearInterval(heartbeat)
 })
 </script>
 
@@ -229,6 +278,12 @@ onBeforeUnmount(() => {
 .buffering-indicator { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 8px; z-index: 10; }
 .buffering-spinner { width: 36px; height: 36px; border: 3px solid rgba(255,255,255,0.2); border-top-color: #fff; border-radius: 50%; animation: spin 0.8s linear infinite; }
 .buffering-text { font-size: 11px; color: #aaa; }
+
+.session-lost-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.82); z-index: 30; }
+.session-lost-card { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 24px 32px; border-radius: 12px; background: #1c1c1e; border: 1px solid #333; max-width: 380px; text-align: center; }
+.session-lost-title { font-size: 15px; font-weight: 600; color: #eee; }
+.session-lost-desc { font-size: 12px; color: #999; line-height: 1.6; }
+.session-lost-actions { display: flex; gap: 8px; margin-top: 4px; }
 
 .player-controls {
   position: absolute; bottom: 0; left: 0; right: 0;

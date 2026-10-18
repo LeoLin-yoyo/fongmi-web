@@ -25,7 +25,8 @@ def clean_auth(tmp_path, monkeypatch):
 
 
 def _write_auth(username, password):
-    with open(core.AUTH_FILE, "w", encoding="utf-8") as f:
+    fd = os.open(core.AUTH_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump({"username": username, "password": password}, f)
     core._cfg_cache["mtime"] = None
 
@@ -51,7 +52,8 @@ def test_enabled_with_both_fields():
 
 
 def test_malformed_json_is_disabled():
-    with open(core.AUTH_FILE, "w") as f:
+    fd = os.open(core.AUTH_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write("{not json")
     core._cfg_cache["mtime"] = None
     assert core.is_enabled() is False

@@ -4,7 +4,7 @@
 取链/转存需 access_token（Bearer）。游客可选不写 Authorization（写了反而被判 unauthenticated）。
 """
 import hashlib
-import random
+import secrets
 import string
 from urllib.parse import quote
 
@@ -52,7 +52,7 @@ class XunleiClient(PanClient):
                 self.access_token = raw.strip()
         # device_id 始终存在（游客链路也需要 X-Device-Id 头）
         if not self.device_id:
-            self.device_id = hashlib.md5(str(random.random()).encode()).hexdigest()[:32]
+            self.device_id = hashlib.md5(str(secrets.randbelow(10**12)).encode()).hexdigest()[:32]
 
     @classmethod
     def is_valid_cookie(cls, cookie: str) -> bool:

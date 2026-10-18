@@ -32,6 +32,8 @@ export const tgAPI = {
   session: (sid: string) => request.get(`/tg/session/${sid}`) as unknown as
     Promise<{ data: { sid: string; state: string; files: TgFile[] } }>,
   stop: (sid: string) => request.post(`/tg/session/${sid}/stop`),
+  keepalive: (sid: string) => request.post(`/tg/keepalive/${sid}`) as unknown as
+    Promise<{ code: number; data: { sid: string; idle: number } }>,
   download: (sid: string, href: string, name = '', folder = '') =>
     request.post('/tg/download', { sid, href, name, folder }) as unknown as Promise<{ id: number; name: string }>,
   streamUrl: (sid: string, href: string) => `/api/tg/stream/${sid}/${href}`,

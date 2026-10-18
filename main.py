@@ -1,3 +1,4 @@
+import asyncio
 import os
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -23,6 +24,7 @@ async def lifespan(app: FastAPI):
     await init_db()
     init_local_video()
     init_downloader()
+    asyncio.create_task(_tg_session_reaper())
     yield
     # 关闭时清理 tdl serve 会话（避免孤儿进程持锁）
     try:
@@ -30,6 +32,20 @@ async def lifespan(app: FastAPI):
         await serve_manager.stop_all()
     except Exception:
         pass
+
+
+async def _tg_session_reaper(interval: float = 60.0, idle_timeout: float = 300.0):
+    """后台回收空闲 TG serve 会话，避免 tdl 进程与端口无限堆积。"""
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            from tg.serve import serve_manager
+            from tg.stream import drop_streamers
+            for sid in await serve_manager.reap_idle(idle_timeout):
+                drop_streamers(sid)
+                logger.info(f"TG 会话 {sid} 空闲超时已回收")
+        except Exception as e:
+            logger.debug(f"TG 会话回收异常: {e}")
 
 
 app = FastAPI(title="FongMi TV Web", lifespan=lifespan)

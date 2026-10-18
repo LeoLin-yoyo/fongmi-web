@@ -6,7 +6,7 @@ timestamp/downloadId/auth 用 AES-ECB(lanZouY-disk-app) → 小写 hex。
 """
 import base64
 import json
-import random
+import secrets
 import time
 from urllib.parse import quote
 
@@ -62,7 +62,7 @@ class ILanzouClient(PanClient):
         except (ValueError, TypeError):
             self.app_token = raw.strip()
         if not self.uuid:
-            self.uuid = "".join(random.choice("0123456789abcdef") for _ in range(32))
+            self.uuid = "".join(secrets.choice("0123456789abcdef") for _ in range(32))
 
     @classmethod
     def is_valid_cookie(cls, cookie: str) -> bool:
